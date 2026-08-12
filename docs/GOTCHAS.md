@@ -104,3 +104,32 @@ client lost history does not depend on where the watermark happens to be.
 **The general lesson.** An early return that means "you are fine" must come
 after every check that can mean "you are not". The failure mode of getting this
 backwards is silence, which is the worst kind in a sync protocol.
+
+---
+
+## #5 — `pnpm install` fails with ERR_PNPM_IGNORED_BUILDS
+
+**Symptom.** A clean `pnpm install` exits non-zero with
+`ERR_PNPM_IGNORED_BUILDS: Ignored build scripts: esbuild`, and suggests running
+the interactive `pnpm approve-builds`. Every `pnpm` script then refuses to run,
+because pnpm checks dependency status first. In CI it just fails.
+
+**Cause.** pnpm blocks package install scripts by default as a supply-chain
+measure, and treats an unreviewed one as an error rather than a warning.
+esbuild — a transitive dependency of Vite — needs its script to link the
+platform binary.
+
+**Fix.** Approve it in `web/pnpm-workspace.yaml`, so the decision is in version
+control and CI needs no interactive step:
+
+```yaml
+allowBuilds:
+  esbuild: true
+```
+
+**The part that costs time.** The setting has moved twice. It used to live in
+`package.json` under `pnpm.onlyBuiltDependencies`, then in `.npmrc`, and pnpm 11
+replaced `onlyBuiltDependencies` (a list) with **`allowBuilds` (a map)** in
+`pnpm-workspace.yaml`. The older spellings are silently ignored — pnpm warns
+about the `package.json` field but not about the rest, so the install keeps
+failing with the same message while the config looks correct.

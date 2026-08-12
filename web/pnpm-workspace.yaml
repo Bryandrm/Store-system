@@ -1,0 +1,15 @@
+packages:
+  - '.'
+
+# pnpm blocks package install scripts by default as a supply-chain measure, and
+# fails the install when an unreviewed one shows up. esbuild needs its script to
+# link the platform binary that Vite and Vitest run on.
+#
+# Approving it here keeps the decision in version control instead of in
+# somebody's local machine state, which also means CI does not need an
+# interactive `pnpm approve-builds`.
+#
+# Note: this used to be `onlyBuiltDependencies` (a list). pnpm 11 replaced it
+# with `allowBuilds` (a map). See docs/GOTCHAS.md.
+allowBuilds:
+  esbuild: true
