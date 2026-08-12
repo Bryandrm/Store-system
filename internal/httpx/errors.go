@@ -6,116 +6,120 @@ import (
 	"net/http"
 )
 
-// AppError es el error de dominio del sistema. Lleva el codigo legible por
-// maquina que el cliente usa para decidir, y la causa interna que solo va al log.
+// AppError is the system's domain error. It carries the machine-readable code
+// the client branches on, plus the internal cause that only ever reaches the log.
+//
+// Note on language: Message is written in Spanish on purpose. It is shown
+// verbatim to the people running the store, who speak Spanish. Everything else
+// in the codebase is English.
 type AppError struct {
 	StatusCode int
 	Code       string
 	Message    string
-	Details    []DetalleCampo
-	causa      error
+	Details    []FieldDetail
+	cause      error
 }
 
 func (e *AppError) Error() string {
-	if e.causa != nil {
-		return fmt.Sprintf("%s: %s: %v", e.Code, e.Message, e.causa)
+	if e.cause != nil {
+		return fmt.Sprintf("%s: %s: %v", e.Code, e.Message, e.cause)
 	}
 	return fmt.Sprintf("%s: %s", e.Code, e.Message)
 }
 
-func (e *AppError) Unwrap() error { return e.causa }
+func (e *AppError) Unwrap() error { return e.cause }
 
-// Causa devuelve el error interno, para el log. Nunca viaja al cliente.
-func (e *AppError) Causa() error {
-	if e.causa != nil {
-		return e.causa
+// Cause returns the internal error, for logging. It never reaches the client.
+func (e *AppError) Cause() error {
+	if e.cause != nil {
+		return e.cause
 	}
 	return errors.New(e.Message)
 }
 
-// Con adjunta la causa interna sin alterar lo que ve el cliente.
-func (e *AppError) Con(causa error) *AppError {
-	copia := *e
-	copia.causa = causa
-	return &copia
+// WithCause attaches the internal cause without changing what the client sees.
+func (e *AppError) WithCause(cause error) *AppError {
+	c := *e
+	c.cause = cause
+	return &c
 }
 
-// ConDetalles agrega detalles de validacion por campo.
-func (e *AppError) ConDetalles(detalles ...DetalleCampo) *AppError {
-	copia := *e
-	copia.Details = append(append([]DetalleCampo{}, copia.Details...), detalles...)
-	return &copia
+// WithDetails adds per-field validation detail.
+func (e *AppError) WithDetails(details ...FieldDetail) *AppError {
+	c := *e
+	c.Details = append(append([]FieldDetail{}, c.Details...), details...)
+	return &c
 }
 
-// ConMensaje reemplaza el mensaje visible manteniendo el codigo.
-func (e *AppError) ConMensaje(msg string) *AppError {
-	copia := *e
-	copia.Message = msg
-	return &copia
+// WithMessage replaces the user-visible message, keeping the code.
+func (e *AppError) WithMessage(msg string) *AppError {
+	c := *e
+	c.Message = msg
+	return &c
 }
 
-// Catalogo cerrado de errores. Agregar uno nuevo es una decision de contrato de
-// API: el cliente ramifica sobre estos codigos, asi que tambien va en docs/API.md.
+// Closed catalog of errors. Adding one is an API contract decision, since the
+// client branches on these codes, so it also belongs in docs/API.md.
 var (
-	ErrValidacion = &AppError{http.StatusUnprocessableEntity, "VALIDATION_ERROR",
+	ErrValidation = &AppError{http.StatusUnprocessableEntity, "VALIDATION_ERROR",
 		"Los datos enviados no son validos", nil, nil}
 
-	ErrNoAutenticado = &AppError{http.StatusUnauthorized, "UNAUTHENTICATED",
+	ErrUnauthenticated = &AppError{http.StatusUnauthorized, "UNAUTHENTICATED",
 		"Necesitas iniciar sesion", nil, nil}
 
-	// ErrTokenVencido y ErrTokenRevocado se distinguen de UNAUTHENTICATED
-	// porque el cliente offline reacciona distinto: pausa la sincronizacion
-	// pero NO descarta la cola de operaciones ni impide seguir vendiendo.
-	ErrTokenVencido = &AppError{http.StatusUnauthorized, "TOKEN_EXPIRED",
+	// ErrTokenExpired and ErrTokenRevoked are distinct from UNAUTHENTICATED
+	// because the offline client reacts differently: it pauses syncing but does
+	// NOT discard the operation queue, and selling keeps working.
+	ErrTokenExpired = &AppError{http.StatusUnauthorized, "TOKEN_EXPIRED",
 		"Tu sesion vencio, volve a iniciar sesion", nil, nil}
 
-	ErrTokenRevocado = &AppError{http.StatusUnauthorized, "TOKEN_REVOKED",
+	ErrTokenRevoked = &AppError{http.StatusUnauthorized, "TOKEN_REVOKED",
 		"Tu sesion fue cerrada desde otro dispositivo", nil, nil}
 
-	ErrProhibido = &AppError{http.StatusForbidden, "FORBIDDEN",
+	ErrForbidden = &AppError{http.StatusForbidden, "FORBIDDEN",
 		"No tenes permiso para esta accion", nil, nil}
 
-	ErrNoEncontrado = &AppError{http.StatusNotFound, "NOT_FOUND",
+	ErrNotFound = &AppError{http.StatusNotFound, "NOT_FOUND",
 		"No se encontro el recurso", nil, nil}
 
-	// ErrCursorMuyViejo se devuelve cuando el cursor del cliente quedo por
-	// debajo del piso de retencion: perdio historia y debe re-bootstrapear.
-	// Sin este error, la poda del change_log produciria huecos silenciosos.
-	ErrCursorMuyViejo = &AppError{http.StatusConflict, "CURSOR_TOO_OLD",
+	// ErrCursorTooOld is returned when the client's cursor fell below the
+	// retention floor: it lost history and must re-bootstrap. Without this
+	// check, pruning change_log would create silent gaps.
+	ErrCursorTooOld = &AppError{http.StatusConflict, "CURSOR_TOO_OLD",
 		"Pasaste mucho tiempo sin sincronizar; hay que recargar los datos", nil, nil}
 
-	ErrProductoDesconocido = &AppError{http.StatusUnprocessableEntity, "UNKNOWN_PRODUCT",
+	ErrUnknownProduct = &AppError{http.StatusUnprocessableEntity, "UNKNOWN_PRODUCT",
 		"Uno de los productos no existe", nil, nil}
 
-	ErrProductoInactivo = &AppError{http.StatusUnprocessableEntity, "INACTIVE_PRODUCT",
+	ErrInactiveProduct = &AppError{http.StatusUnprocessableEntity, "INACTIVE_PRODUCT",
 		"Uno de los productos ya no esta a la venta", nil, nil}
 
-	// ErrTotalNoCoincide indica que el total que calculo el cliente difiere del
-	// del servidor en mas de un centavo. Es un bug, no un caso de negocio.
-	ErrTotalNoCoincide = &AppError{http.StatusUnprocessableEntity, "TOTAL_MISMATCH",
+	// ErrTotalMismatch means the client's computed total differs from the
+	// server's by more than one cent. That is a bug, not a business case.
+	ErrTotalMismatch = &AppError{http.StatusUnprocessableEntity, "TOTAL_MISMATCH",
 		"El total no coincide con el detalle de la venta", nil, nil}
 
-	ErrVentaYaAnulada = &AppError{http.StatusConflict, "SALE_ALREADY_VOIDED",
+	ErrSaleAlreadyVoided = &AppError{http.StatusConflict, "SALE_ALREADY_VOIDED",
 		"Esa venta ya estaba anulada", nil, nil}
 
-	ErrDemasiadosIntentos = &AppError{http.StatusTooManyRequests, "RATE_LIMITED",
+	ErrRateLimited = &AppError{http.StatusTooManyRequests, "RATE_LIMITED",
 		"Demasiados intentos, espera un momento", nil, nil}
 
-	ErrCuerpoInvalido = &AppError{http.StatusBadRequest, "INVALID_BODY",
+	ErrInvalidBody = &AppError{http.StatusBadRequest, "INVALID_BODY",
 		"El cuerpo de la peticion no es JSON valido", nil, nil}
 
-	// ErrInterno es lo unico que ve el cliente ante un 5xx. El detalle real
-	// queda en el log, correlacionado por request_id.
-	ErrInterno = &AppError{http.StatusInternalServerError, "INTERNAL_ERROR",
+	// ErrInternal is the only thing a client ever sees for a 5xx. The real
+	// detail stays in the log, correlated by request_id.
+	ErrInternal = &AppError{http.StatusInternalServerError, "INTERNAL_ERROR",
 		"Error interno del servidor", nil, nil}
 )
 
-// ComoAppError traduce cualquier error al catalogo. Lo desconocido se degrada a
-// ErrInterno, de modo que es imposible filtrar un mensaje interno por descuido.
-func ComoAppError(err error) *AppError {
+// AsAppError maps any error onto the catalog. Anything unknown degrades to
+// ErrInternal, which makes it impossible to leak an internal message by accident.
+func AsAppError(err error) *AppError {
 	var appErr *AppError
 	if errors.As(err, &appErr) {
 		return appErr
 	}
-	return ErrInterno.Con(err)
+	return ErrInternal.WithCause(err)
 }

@@ -2,13 +2,13 @@ package httpx
 
 import "net/http"
 
-// Middleware envuelve un handler. Es la firma de stdlib, sin framework.
+// Middleware wraps a handler. It is the stdlib signature, no framework.
 type Middleware func(http.Handler) http.Handler
 
-// Chain compone middlewares de modo que se ejecuten en el orden en que se
-// escriben: Chain(h, A, B) corre A, despues B, despues h.
+// Chain composes middlewares so they run in written order:
+// Chain(h, A, B) runs A, then B, then h.
 //
-// Se recorre al reves porque cada middleware envuelve al siguiente.
+// It iterates backwards because each middleware wraps the next one.
 func Chain(h http.Handler, middlewares ...Middleware) http.Handler {
 	for i := len(middlewares) - 1; i >= 0; i-- {
 		h = middlewares[i](h)

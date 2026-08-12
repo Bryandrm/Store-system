@@ -1,12 +1,12 @@
-// Package httpx define el contrato HTTP del sistema.
+// Package httpx defines the HTTP contract of the system.
 //
-// Este archivo es el UNICO lugar del codigo donde se puede construir un cuerpo
-// de respuesta. No es una convencion de estilo: cuando cualquier handler puede
-// armar su propio cuerpo, la deriva es cuestion de tiempo, y el costo lo
-// termina pagando el cliente con adaptadores que reconcilian las variantes.
+// This file is the ONLY place in the codebase where a response body can be
+// built. That is not a style convention: when any handler can assemble its own
+// body, drift is a matter of time, and the client ends up paying for it with an
+// adapter that guesses which shape arrived. That adapter never gets deleted.
 //
-// Si necesitas devolver algo con otra forma, la respuesta correcta es discutir
-// el contrato, no agregar un escape.
+// If you need to return something with a different shape, the right move is to
+// discuss the contract, not to add an escape hatch.
 package httpx
 
 import (
@@ -16,47 +16,46 @@ import (
 	"time"
 )
 
-// respuestaOK es la forma de toda respuesta exitosa.
-type respuestaOK struct {
+// successBody is the shape of every successful response.
+type successBody struct {
 	OK         bool   `json:"ok"`
 	StatusCode int    `json:"statusCode"`
 	Message    string `json:"message,omitempty"`
 	Data       any    `json:"data"`
 }
 
-// respuestaError es la forma de todo error. El campo Error es un codigo legible
-// por maquina: el cliente decide con el, nunca con el texto de Message.
-type respuestaError struct {
-	OK         bool           `json:"ok"`
-	StatusCode int            `json:"statusCode"`
-	Error      string         `json:"error"`
-	Message    string         `json:"message"`
-	Details    []DetalleCampo `json:"details,omitempty"`
-	Path       string         `json:"path"`
-	Timestamp  string         `json:"timestamp"`
-	RequestID  string         `json:"request_id,omitempty"`
+// errorBody is the shape of every error. Error is a machine-readable code: the
+// client branches on it, never on the human text in Message.
+type errorBody struct {
+	OK         bool          `json:"ok"`
+	StatusCode int           `json:"statusCode"`
+	Error      string        `json:"error"`
+	Message    string        `json:"message"`
+	Details    []FieldDetail `json:"details,omitempty"`
+	Path       string        `json:"path"`
+	Timestamp  string        `json:"timestamp"`
+	RequestID  string        `json:"request_id,omitempty"`
 }
 
-// DetalleCampo describe un problema puntual de validacion.
-type DetalleCampo struct {
+// FieldDetail describes a single validation problem.
+type FieldDetail struct {
 	Field string `json:"field"`
 	Code  string `json:"code"`
 }
 
-// Pagina es la UNICA forma de paginacion del sistema: cursor, nunca offset.
+// Page is the system's ONLY pagination shape: cursor, never offset.
 //
-// Se devuelve asi incluso cuando hay una sola pagina. La alternativa (a veces
-// un arreglo pelado, a veces envuelto) obliga al cliente a escribir un
-// adaptador que adivine cual de las dos formas llego, y ese adaptador nunca se
-// borra.
-type Pagina[T any] struct {
+// It is returned this way even when there is a single page. The alternative
+// (sometimes a bare array, sometimes wrapped) forces the client to write an
+// adapter that guesses which of the two shapes it got.
+type Page[T any] struct {
 	Items      []T     `json:"items"`
 	NextCursor *string `json:"next_cursor"`
 }
 
-// OK escribe una respuesta exitosa.
+// OK writes a successful response.
 func OK(w http.ResponseWriter, r *http.Request, status int, message string, data any) {
-	escribirJSON(w, r, status, respuestaOK{
+	writeJSON(w, r, status, successBody{
 		OK:         true,
 		StatusCode: status,
 		Message:    message,
@@ -64,25 +63,25 @@ func OK(w http.ResponseWriter, r *http.Request, status int, message string, data
 	})
 }
 
-// Fail escribe una respuesta de error a partir de un AppError.
+// Fail writes an error response from an AppError.
 //
-// Los 5xx NUNCA filtran detalles internos: el mensaje al usuario es generico y
-// el error real va al log con el mismo request_id, que el usuario puede leer de
-// la pantalla y dictar por telefono.
+// 5xx responses NEVER leak internal detail: the user gets a generic message and
+// a request_id they can read off the screen, while the real error goes to the
+// log correlated by that same id.
 func Fail(w http.ResponseWriter, r *http.Request, err error) {
-	appErr := ComoAppError(err)
-	reqID := RequestIDDe(r.Context())
+	appErr := AsAppError(err)
+	reqID := RequestIDFrom(r.Context())
 
 	if appErr.StatusCode >= 500 {
-		slog.ErrorContext(r.Context(), "error interno",
+		slog.ErrorContext(r.Context(), "internal error",
 			"request_id", reqID,
 			"path", r.URL.Path,
-			"error", appErr.Causa(),
+			"error", appErr.Cause(),
 		)
-		appErr = ErrInterno
+		appErr = ErrInternal
 	}
 
-	escribirJSON(w, r, appErr.StatusCode, respuestaError{
+	writeJSON(w, r, appErr.StatusCode, errorBody{
 		OK:         false,
 		StatusCode: appErr.StatusCode,
 		Error:      appErr.Code,
@@ -94,7 +93,7 @@ func Fail(w http.ResponseWriter, r *http.Request, err error) {
 	})
 }
 
-func escribirJSON(w http.ResponseWriter, r *http.Request, status int, cuerpo any) {
+func writeJSON(w http.ResponseWriter, r *http.Request, status int, body any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(status)
@@ -102,9 +101,9 @@ func escribirJSON(w http.ResponseWriter, r *http.Request, status int, cuerpo any
 	if r.Method == http.MethodHead {
 		return
 	}
-	if err := json.NewEncoder(w).Encode(cuerpo); err != nil {
-		// El status ya se envio; no queda nada que hacer salvo dejar rastro.
-		slog.ErrorContext(r.Context(), "no se pudo serializar la respuesta",
-			"request_id", RequestIDDe(r.Context()), "error", err)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		// The status is already on the wire; all we can do is leave a trace.
+		slog.ErrorContext(r.Context(), "could not encode response",
+			"request_id", RequestIDFrom(r.Context()), "error", err)
 	}
 }

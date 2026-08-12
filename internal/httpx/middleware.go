@@ -11,112 +11,114 @@ import (
 	"github.com/google/uuid"
 )
 
-type claveCtx string
+type ctxKey string
 
-const claveRequestID claveCtx = "request_id"
+const ctxKeyRequestID ctxKey = "request_id"
 
-// RequestIDDe devuelve el identificador de la peticion, que correlaciona lo que
-// el usuario ve en pantalla con la linea del log.
-func RequestIDDe(ctx context.Context) string {
-	if v, ok := ctx.Value(claveRequestID).(string); ok {
+// RequestIDFrom returns the request identifier, which correlates what the user
+// sees on screen with the matching log line.
+func RequestIDFrom(ctx context.Context) string {
+	if v, ok := ctx.Value(ctxKeyRequestID).(string); ok {
 		return v
 	}
 	return ""
 }
 
-// ConRequestID asigna un identificador unico a cada peticion.
-func ConRequestID(siguiente http.Handler) http.Handler {
+// WithRequestID assigns a unique identifier to every request.
+func WithRequestID(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		id := uuid.Must(uuid.NewV7()).String()
 		w.Header().Set("X-Request-ID", id)
-		siguiente.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), claveRequestID, id)))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKeyRequestID, id)))
 	})
 }
 
-// escritorConEstado captura el status para poder registrarlo.
-type escritorConEstado struct {
+// statusWriter captures the status code so it can be logged.
+type statusWriter struct {
 	http.ResponseWriter
-	estado int
+	status int
 	bytes  int
 }
 
-func (w *escritorConEstado) WriteHeader(codigo int) {
-	w.estado = codigo
-	w.ResponseWriter.WriteHeader(codigo)
+func (w *statusWriter) WriteHeader(code int) {
+	w.status = code
+	w.ResponseWriter.WriteHeader(code)
 }
 
-func (w *escritorConEstado) Write(b []byte) (int, error) {
-	if w.estado == 0 {
-		w.estado = http.StatusOK
+func (w *statusWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
 	}
 	n, err := w.ResponseWriter.Write(b)
 	w.bytes += n
 	return n, err
 }
 
-// ConLog registra cada peticion.
-func ConLog(siguiente http.Handler) http.Handler {
+// WithLogging records every request.
+func WithLogging(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		inicio := time.Now()
-		ew := &escritorConEstado{ResponseWriter: w}
+		start := time.Now()
+		sw := &statusWriter{ResponseWriter: w}
 
-		siguiente.ServeHTTP(ew, r)
+		next.ServeHTTP(sw, r)
 
-		nivel := slog.LevelInfo
-		if ew.estado >= 500 {
-			nivel = slog.LevelError
-		} else if ew.estado >= 400 {
-			nivel = slog.LevelWarn
+		level := slog.LevelInfo
+		switch {
+		case sw.status >= 500:
+			level = slog.LevelError
+		case sw.status >= 400:
+			level = slog.LevelWarn
 		}
 
-		slog.LogAttrs(r.Context(), nivel, "peticion",
-			slog.String("request_id", RequestIDDe(r.Context())),
-			slog.String("metodo", r.Method),
-			slog.String("ruta", r.URL.Path),
-			slog.Int("estado", ew.estado),
-			slog.Int("bytes", ew.bytes),
-			slog.Duration("duracion", time.Since(inicio)),
+		slog.LogAttrs(r.Context(), level, "request",
+			slog.String("request_id", RequestIDFrom(r.Context())),
+			slog.String("method", r.Method),
+			slog.String("path", r.URL.Path),
+			slog.Int("status", sw.status),
+			slog.Int("bytes", sw.bytes),
+			slog.Duration("duration", time.Since(start)),
 		)
 	})
 }
 
-// ConRecover convierte un panic en un 500 con envelope, en vez de dejar caer la
-// conexion. El stack va al log; el cliente solo ve el request_id.
-func ConRecover(siguiente http.Handler) http.Handler {
+// WithRecover turns a panic into a 500 with the standard envelope instead of
+// dropping the connection. The stack goes to the log; the client only gets the
+// request_id.
+func WithRecover(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if p := recover(); p != nil {
-				slog.ErrorContext(r.Context(), "panic recuperado",
-					"request_id", RequestIDDe(r.Context()),
+				slog.ErrorContext(r.Context(), "recovered panic",
+					"request_id", RequestIDFrom(r.Context()),
 					"panic", p,
 					"stack", string(debug.Stack()),
 				)
-				Fail(w, r, ErrInterno)
+				Fail(w, r, ErrInternal)
 			}
 		}()
-		siguiente.ServeHTTP(w, r)
+		next.ServeHTTP(w, r)
 	})
 }
 
-// ConCORS habilita el acceso desde los origenes indicados.
+// WithCORS allows access from the given origins.
 //
-// El PWA vive en Cloudflare Pages y la API en api.<dominio>: es cross-site por
-// diseño. Nunca se usa "*" y nunca se habilitan credenciales, porque la
-// autenticacion es bearer en JS, sin cookies, y por lo tanto sin superficie CSRF.
+// The PWA lives on Cloudflare Pages and the API on api.<domain>: cross-site by
+// design. It never uses "*" and never enables credentials, because auth is a
+// bearer token held in JS, with no cookies and therefore no CSRF surface.
 //
-// Como /sync manda Authorization, TODO POST dispara preflight; Max-Age evita
-// pagar ese viaje extra en cada venta.
-func ConCORS(origenesPermitidos []string) func(http.Handler) http.Handler {
-	permitidos := make(map[string]bool, len(origenesPermitidos))
-	for _, o := range origenesPermitidos {
-		permitidos[strings.TrimSpace(o)] = true
+// Since /sync sends Authorization, EVERY POST triggers a preflight; Max-Age
+// avoids paying for that extra round trip on every sale.
+func WithCORS(allowedOrigins []string) Middleware {
+	allowed := make(map[string]bool, len(allowedOrigins))
+	for _, o := range allowedOrigins {
+		allowed[strings.TrimSpace(o)] = true
 	}
 
-	return func(siguiente http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			origen := r.Header.Get("Origin")
-			if origen != "" && permitidos[origen] {
-				w.Header().Set("Access-Control-Allow-Origin", origen)
+			origin := r.Header.Get("Origin")
+			if origin != "" && allowed[origin] {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Vary", "Origin")
 				w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
 				w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
@@ -127,7 +129,7 @@ func ConCORS(origenesPermitidos []string) func(http.Handler) http.Handler {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
-			siguiente.ServeHTTP(w, r)
+			next.ServeHTTP(w, r)
 		})
 	}
 }
