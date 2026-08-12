@@ -1,84 +1,85 @@
 # store-system
 
-Sistema de ventas para una tienda chica: registro rápido de ventas, inventario,
-reabastecimiento, fiado y saldo a favor. PWA instalable que **funciona sin
-señal** y sincroniza entre dispositivos.
+Point-of-sale system for a small snack stand: fast sale entry, inventory,
+restocking, store credit and customer debt. An installable PWA that **works with
+no signal** and syncs across devices.
 
-Los productos son semillas, maní, maní dulce, maní japonés, marañón, semillas de
-pepitoria, chocolates y churros. El punto de venta suele estar sin cobertura, así
-que trabajar offline no es una comodidad: es el requisito principal.
+The products are sunflower seeds, peanuts, sweet peanuts, Japanese peanuts,
+cashews, pumpkin seeds, chocolates and churros. The stand is often out of mobile
+coverage, so working offline is not a nicety: it is the primary requirement.
 
-## La idea en una frase
+## The idea in one sentence
 
-> **Todo dato que toca plata o stock es una fila inmutable. Todo número que la UI
-> muestra es un `SUM()`. Los dispositivos offline solo hacen `INSERT`.**
+> **Every fact that touches money or stock is an immutable row. Every number the
+> UI shows is a `SUM()`. Offline devices only ever `INSERT`.**
 
-De ahí sale la propiedad central: **ningún conflicto de sincronización puede
-existir por construcción**. Y no queda librado a la disciplina del código — el
-rol con el que corre la API **no tiene permiso de `UPDATE` ni `DELETE`** sobre
-ninguna tabla transaccional.
+From that follows the central property: **no sync conflict can exist by
+construction**. And it is not left to the discipline of the code — the role the
+API runs as **has no `UPDATE` or `DELETE` privilege** on any transactional table.
 
 ## Stack
 
-| Capa | Elección |
+| Layer | Choice |
 |---|---|
-| Backend | Go 1.26 · `net/http` de stdlib · `pgx` · `sqlc` · `goose` |
-| Base | PostgreSQL 18 con `data-checksums` |
-| Frontend | React 19 · Vite · TypeScript estricto · Tailwind v4 · Zustand |
-| Offline | IndexedDB · service worker propio · cola de operaciones |
+| Backend | Go 1.26 · stdlib `net/http` · `pgx` · `sqlc` · `goose` |
+| Database | PostgreSQL 18 with `data-checksums` |
+| Frontend | React 19 · Vite · strict TypeScript · Tailwind v4 · Zustand |
+| Offline | IndexedDB · hand-written service worker · operation outbox |
 | Infra | Cloudflare Pages (PWA) + GCP e2-micro (API) + Caddy |
 
-Sin ORM, sin framework HTTP, sin librería de componentes.
+No ORM, no HTTP framework, no component library.
 
-## Arrancar
+## Getting started
 
 ```bash
-# 1. la base de desarrollo (puerto 5433, para no chocar con otro Postgres)
+# 1. the development database (port 5433, to avoid clashing with another Postgres)
 docker compose -f compose.dev.yml up -d
 
-# 2. los tests, que crean y borran sus propias bases efímeras
+# 2. the tests, which create and drop their own throwaway databases
 go test ./... -race
 ```
 
-Requisitos: Go 1.26+, Docker o Colima, Node 22+ (cuando exista el frontend).
+Requirements: Go 1.26+, Docker or Colima, Node 22+ (once the frontend exists).
 
-## Documentación
+## Documentation
 
-| Archivo | Qué contiene |
+| File | Contents |
 |---|---|
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Los cuatro diagramas y de dónde viene cada decisión |
-| `docs/DECISIONS.md` | ADRs *(pendiente)* |
-| `docs/SYNC.md` | El protocolo y su argumento de correctitud *(pendiente)* |
-| `docs/DEPLOY.md` | Despliegue y runbook de restauración *(pendiente)* |
-| `docs/GOTCHAS.md` | Bitácora numerada de trampas ya pagadas *(pendiente)* |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The four diagrams and where each decision comes from |
+| `docs/DECISIONS.md` | ADRs *(pending)* |
+| `docs/SYNC.md` | The protocol and its correctness argument *(pending)* |
+| `docs/DEPLOY.md` | Deployment and restore runbook *(pending)* |
+| `docs/GOTCHAS.md` | Numbered ledger of traps already paid for *(pending)* |
 
-## Estado
+## Status
 
-En desarrollo, milestone 1 (**"Vender y ver el día"**).
+In development, milestone 1 (**"Sell and see the day"**).
 
-| Componente | Estado |
+| Component | Status |
 |---|---|
-| Esquema, ledgers y vistas derivadas | ✅ migrado y probado |
-| Blindaje append-only por permisos | ✅ 12 tablas verificadas en CI |
-| Aritmética de dinero + fixture compartido | ✅ |
-| Harness de base efímera | ✅ |
-| Contrato HTTP | ✅ |
-| Autenticación | ⬜ |
-| Ventas y sincronización | ⬜ |
+| Schema, ledgers and derived views | ✅ migrated and tested |
+| Append-only enforcement via grants | ✅ 12 tables verified in CI |
+| Money arithmetic + shared fixture | ✅ |
+| Throwaway database harness | ✅ |
+| HTTP contract | ✅ |
+| Authentication | ⬜ |
+| Sales and synchronization | ⬜ |
 | PWA | ⬜ |
 
-## Convenciones
+## Conventions
 
-Commits convencionales con el módulo como *scope*, para que el changelog se
-genere agrupado por módulo:
+Conventional commits with the module as the scope, so the changelog can be
+generated grouped by module:
 
 ```
-feat(ventas):     registro rápido con teclado numérico
-fix(sync):        la cola no reintentaba tras un 401
-feat(inventario): alerta de stock bajo
+feat(sales):     quick entry with a numeric keypad
+fix(sync):       the outbox stopped retrying after a 401
+feat(inventory): low stock warning
 ```
 
-Scopes: `ventas` · `inventario` · `fiado` · `reabastecimiento` · `perfiles` ·
-`sync` · `api` · `infra` · `docs`.
+Scopes: `sales` · `inventory` · `credit` · `restock` · `profiles` · `sync` ·
+`api` · `infra` · `docs`.
 
-Identificadores en inglés, prosa y textos de usuario en español.
+Code, comments, documentation and commit messages are written in English.
+User-facing strings — the app's interface and API error messages — are in
+Spanish, because that is what the people running the store read.
