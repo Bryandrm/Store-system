@@ -1,10 +1,10 @@
--- Esquema inicial de store-system.
+-- Initial schema for store-system.
 --
--- Principio rector: todo dato que toca plata o stock es una fila inmutable, y
--- todo numero que la UI muestra es un SUM(). Ver docs/DECISIONS.md ADR-000.
+-- Guiding principle: every fact that touches money or stock is an immutable
+-- row, and every number the UI shows is a SUM(). See docs/DECISIONS.md ADR-000.
 --
--- Los permisos del final NO son endurecimiento opcional: son lo que convierte
--- "append-only" de convencion en garantia. Ver ADR-009.
+-- The grants at the bottom are NOT optional hardening: they are what turns
+-- "append-only" from a convention into a guarantee. See ADR-009.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -12,9 +12,9 @@
 -- ============================================================================
 -- roles
 -- ============================================================================
--- store_app es el rol que usa la API en runtime. Se crea sin LOGIN y sin
--- password: la infraestructura le asigna credenciales con ALTER ROLE, de modo
--- que ningun secreto vive en el repositorio.
+-- store_app is the role the API runs as. It is created NOLOGIN and without a
+-- password: the infrastructure assigns credentials with ALTER ROLE, so no
+-- secret ever lives in the repository.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'store_app') THEN
@@ -24,13 +24,13 @@ END
 $$;
 
 -- ============================================================================
--- usuarios y sesiones
+-- users and sessions
 -- ============================================================================
 CREATE TABLE users (
   id            UUID PRIMARY KEY,
   username      TEXT NOT NULL UNIQUE,
   display_name  TEXT NOT NULL,
-  password_hash TEXT NOT NULL,                       -- cadena codificada argon2id
+  password_hash TEXT NOT NULL,                       -- argon2id encoded string
   role          TEXT NOT NULL CHECK (role IN ('owner', 'staff')),
   is_active     BOOLEAN NOT NULL DEFAULT TRUE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -38,7 +38,7 @@ CREATE TABLE users (
 );
 
 CREATE TABLE sessions (
-  token_sha256 BYTEA PRIMARY KEY,                    -- nunca se guarda el token en claro
+  token_sha256 BYTEA PRIMARY KEY,                    -- the raw token is never stored
   user_id      UUID NOT NULL REFERENCES users(id),
   device_label TEXT NOT NULL,
   created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -49,28 +49,28 @@ CREATE TABLE sessions (
 CREATE INDEX sessions_user_id_idx ON sessions (user_id);
 
 -- ============================================================================
--- catalogo
+-- catalog
 -- ============================================================================
 CREATE TABLE products (
   id         UUID PRIMARY KEY,
   name       TEXT NOT NULL,
   category   TEXT NOT NULL DEFAULT 'general',
-  is_active  BOOLEAN NOT NULL DEFAULT TRUE,          -- visibilidad, NO borrado logico
+  is_active  BOOLEAN NOT NULL DEFAULT TRUE,          -- visibility, NOT a soft delete
   sort_order INTEGER NOT NULL DEFAULT 0,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
--- indice funcional en lugar de colacion case-insensitive: el cluster usa
--- --locale=C a proposito (ver docs/DEPLOY.md).
+-- A functional index instead of a case-insensitive collation: the cluster runs
+-- with --locale=C on purpose (see docs/DEPLOY.md).
 CREATE UNIQUE INDEX products_name_lower_idx ON products (lower(name));
 
--- El precio es un ledger, no una columna. Un price_cents mutable seria la
--- UNICA superficie de conflicto de update del sistema. Ver ADR-004.
+-- Price is a ledger, not a column. A mutable price_cents would be the system's
+-- ONLY update-conflict surface. See ADR-004.
 CREATE TABLE product_prices (
   id                 UUID PRIMARY KEY,
   product_id         UUID NOT NULL REFERENCES products(id),
   price_cents        BIGINT NOT NULL CHECK (price_cents >= 0),
-  cost_cents         BIGINT CHECK (cost_cents >= 0),  -- opcional; solo lo ve owner
+  cost_cents         BIGINT CHECK (cost_cents >= 0),  -- optional; owner-only
   effective_from     TIMESTAMPTZ NOT NULL,
   note               TEXT,
   created_by_user_id UUID NOT NULL REFERENCES users(id),
@@ -91,26 +91,26 @@ CREATE TABLE customers (
 CREATE INDEX customers_name_lower_idx ON customers (lower(name));
 
 -- ============================================================================
--- ventas (append-only)
+-- sales (append-only)
 -- ============================================================================
 CREATE TABLE sales (
-  id                 UUID PRIMARY KEY,               -- UUIDv7 generado en el cliente
+  id                 UUID PRIMARY KEY,               -- client-generated UUIDv7
   customer_id        UUID REFERENCES customers(id),
   total_cents        BIGINT NOT NULL CHECK (total_cents >= 0),
   paid_cents         BIGINT NOT NULL CHECK (paid_cents >= 0),
   payment_method     TEXT NOT NULL
                        CHECK (payment_method IN ('cash', 'credit', 'mixed')),
   note               TEXT,
-  occurred_at        TIMESTAMPTZ NOT NULL,           -- reloj del dispositivo
-  recorded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),  -- reloj del servidor
+  occurred_at        TIMESTAMPTZ NOT NULL,           -- device clock
+  recorded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),  -- server clock
   clock_skew_flagged BOOLEAN NOT NULL DEFAULT FALSE,
   device_id          TEXT NOT NULL,
-  -- created_by: quien dice la operacion que vendio.
-  -- synced_by:  el dueño del token que la subio.
-  -- Guardar ambos hace auditable el caso de re-login como la otra persona.
+  -- created_by: who the operation claims made the sale.
+  -- synced_by:  the owner of the token that uploaded it.
+  -- Storing both keeps "logged back in as the other person" auditable.
   created_by_user_id UUID NOT NULL REFERENCES users(id),
   synced_by_user_id  UUID NOT NULL REFERENCES users(id),
-  -- una venta a credito no puede estar totalmente pagada, y viceversa
+  -- A credit sale cannot be fully paid, and a cash sale cannot be unpaid.
   CONSTRAINT sales_payment_coherent CHECK (
     (payment_method = 'cash'   AND paid_cents = total_cents) OR
     (payment_method = 'credit' AND paid_cents = 0)           OR
@@ -124,18 +124,18 @@ CREATE TABLE sale_lines (
   id                    UUID PRIMARY KEY,
   sale_id               UUID NOT NULL REFERENCES sales(id),
   product_id            UUID NOT NULL REFERENCES products(id),
-  qty_milli             BIGINT NOT NULL CHECK (qty_milli > 0),   -- milesimas de unidad
+  qty_milli             BIGINT NOT NULL CHECK (qty_milli > 0),   -- thousandths of a unit
   unit_price_cents      BIGINT NOT NULL CHECK (unit_price_cents >= 0),
   line_total_cents      BIGINT NOT NULL CHECK (line_total_cents >= 0),
-  product_name_snapshot TEXT NOT NULL,               -- inmune a renombres posteriores
+  product_name_snapshot TEXT NOT NULL,               -- immune to later renames
   line_no               INTEGER NOT NULL CHECK (line_no > 0)
 );
 CREATE UNIQUE INDEX sale_lines_sale_line_no_idx ON sale_lines (sale_id, line_no);
 CREATE INDEX sale_lines_sale_idx    ON sale_lines (sale_id);
 CREATE INDEX sale_lines_product_idx ON sale_lines (product_id);
 
--- Anular es un append compensatorio. Es la UNICA forma de "borrar" una
--- transaccion: la fila de sales nunca se toca.
+-- Voiding is a compensating append. It is the ONLY way to "delete" a
+-- transaction: the sales row itself is never touched.
 CREATE TABLE sale_voids (
   sale_id           UUID PRIMARY KEY REFERENCES sales(id),
   reason            TEXT NOT NULL,
@@ -145,7 +145,7 @@ CREATE TABLE sale_voids (
 );
 
 -- ============================================================================
--- reabastecimiento
+-- restocking
 -- ============================================================================
 CREATE TABLE restocks (
   id                 UUID PRIMARY KEY,
@@ -169,10 +169,10 @@ CREATE UNIQUE INDEX restock_lines_line_no_idx ON restock_lines (restock_id, line
 CREATE INDEX restock_lines_restock_idx ON restock_lines (restock_id);
 
 -- ============================================================================
--- LEDGER 1: existencias
+-- LEDGER 1: stock
 -- ============================================================================
--- El stock NO se guarda. Es SUM(delta_qty_milli). Un delta de cero significa
--- que una operacion se aplico a medias, por eso esta prohibido.
+-- Stock is NOT stored. It is SUM(delta_qty_milli). A zero delta would mean an
+-- operation was half-applied, which is why it is forbidden.
 CREATE TABLE stock_movements (
   id                 UUID PRIMARY KEY,
   product_id         UUID NOT NULL REFERENCES products(id),
@@ -185,7 +185,7 @@ CREATE TABLE stock_movements (
   occurred_at        TIMESTAMPTZ NOT NULL,
   recorded_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_by_user_id UUID NOT NULL REFERENCES users(id),
-  -- si el movimiento dice venir de una venta o un restock, tiene que decir cual
+  -- If a movement claims to come from a sale or a restock, it must say which.
   CONSTRAINT stock_movements_ref_coherent CHECK (
     (ref_kind = 'manual' AND ref_id IS NULL) OR
     (ref_kind <> 'manual' AND ref_id IS NOT NULL)
@@ -196,10 +196,10 @@ CREATE INDEX stock_movements_ref_idx      ON stock_movements (ref_kind, ref_id);
 CREATE INDEX stock_movements_occurred_idx ON stock_movements (occurred_at DESC);
 
 -- ============================================================================
--- LEDGER 2: cuenta corriente de clientes
+-- LEDGER 2: customer account
 -- ============================================================================
--- Signo:  (+) saldo a favor del cliente (dejo dinero de mas)
---         (-) fiado: el cliente debe
+-- Sign:  (+) the customer has credit (left extra money)
+--        (-) the customer owes money
 CREATE TABLE customer_ledger (
   id                 UUID PRIMARY KEY,
   customer_id        UUID NOT NULL REFERENCES customers(id),
@@ -233,11 +233,11 @@ CREATE TABLE payments (
 CREATE INDEX payments_customer_idx ON payments (customer_id);
 
 -- ============================================================================
--- sincronizacion
+-- synchronization
 -- ============================================================================
--- xact_id es el cursor real. seq sobrevive solo como desempate determinista
--- DENTRO de una transaccion: las secuencias no son transaccionales y usarlas
--- como cursor pierde filas en silencio. Ver ADR-001.
+-- xact_id is the real cursor. seq survives only as a deterministic tiebreak
+-- WITHIN one transaction: sequences are not transactional, and using one as a
+-- cursor silently drops rows. See ADR-001.
 CREATE TABLE change_log (
   seq        BIGSERIAL PRIMARY KEY,
   xact_id    XID8  NOT NULL DEFAULT pg_current_xact_id(),
@@ -249,35 +249,34 @@ CREATE TABLE change_log (
 );
 CREATE INDEX change_log_xact_idx ON change_log (xact_id, seq);
 
--- Piso de retencion. Si el cursor de un cliente quedo por debajo, ese cliente
--- perdio historia y debe re-bootstrapear (CURSOR_TOO_OLD). Sin esta tabla, la
--- poda produce huecos silenciosos.
+-- Retention floor. A client whose cursor fell below this lost history and must
+-- re-bootstrap (CURSOR_TOO_OLD). Without this table, pruning creates silent gaps.
 CREATE TABLE change_log_floor (
   singleton            BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
   min_retained_xact_id XID8 NOT NULL DEFAULT '0'::xid8
 );
 INSERT INTO change_log_floor DEFAULT VALUES;
 
--- Registro de idempotencia. Se inserta en la MISMA transaccion que las filas
--- de dominio, por eso reenviar una operacion nunca duplica nada.
+-- Idempotency ledger. Inserted in the SAME transaction as the domain rows,
+-- which is why replaying an operation never duplicates anything.
 CREATE TABLE sync_operations (
-  op_id         UUID PRIMARY KEY,                    -- UUIDv7 generado en el cliente
+  op_id         UUID PRIMARY KEY,                    -- client-generated UUIDv7
   device_id     TEXT NOT NULL,
   user_id       UUID NOT NULL REFERENCES users(id),
   op_type       TEXT NOT NULL,
   status        TEXT NOT NULL CHECK (status IN ('applied', 'rejected')),
   error_code    TEXT,
   error_message TEXT,
-  request_hash  BYTEA NOT NULL,                      -- sha256 del payload
+  request_hash  BYTEA NOT NULL,                      -- sha256 of the payload
   applied_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX sync_operations_device_idx ON sync_operations (device_id, applied_at DESC);
 
 -- ============================================================================
--- vistas derivadas
+-- derived views
 -- ============================================================================
--- Vistas y no tablas materializadas: un SUM sobre 50k movimientos con indice
--- tarda <10ms. Umbral para reconsiderar: ~1M de filas (unos 20 años).
+-- Views rather than materialized tables: a SUM over 50k movements with the
+-- index takes <10 ms. Revisit at roughly 1M rows (about 20 years).
 CREATE VIEW stock_levels AS
 SELECT p.id AS product_id,
        COALESCE(SUM(m.delta_qty_milli), 0)::BIGINT AS qty_milli
@@ -300,17 +299,17 @@ WHERE effective_from <= now()
 ORDER BY product_id, effective_from DESC, created_at DESC;
 
 -- ============================================================================
--- permisos: aca el append-only deja de ser disciplina
+-- grants: where append-only stops being discipline
 -- ============================================================================
 GRANT USAGE ON SCHEMA public TO store_app;
 GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA public TO store_app;
 
--- change_log.seq es BIGSERIAL: sin USAGE sobre la secuencia, todo INSERT falla.
+-- change_log.seq is BIGSERIAL: without USAGE on the sequence every INSERT fails.
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO store_app;
 
--- Las tablas transaccionales quedan blindadas. Un UPDATE introducido por error
--- dentro de seis meses falla con permission denied en la primera prueba, en vez
--- de corromper la contabilidad en silencio.
+-- The transactional tables are locked down. A stray UPDATE introduced six
+-- months from now fails with permission denied on its first run, instead of
+-- silently corrupting the books.
 REVOKE UPDATE, DELETE ON
   sales, sale_lines, sale_voids,
   stock_movements, customer_ledger, payments,
@@ -318,16 +317,16 @@ REVOKE UPDATE, DELETE ON
   change_log, sync_operations
 FROM store_app;
 
--- Solo el catalogo y las sesiones admiten UPDATE: metadata cosmetica por
--- last-write-wins, y last_seen_at de la sesion.
+-- Only the catalog and sessions accept UPDATE: cosmetic last-write-wins
+-- metadata, plus the session's last_seen_at.
 GRANT UPDATE ON products, customers, users, sessions TO store_app;
 
--- change_log_floor lo actualiza el podador, que corre con el rol migrador.
+-- change_log_floor is written by the pruner, which runs as the migrator role.
 REVOKE UPDATE, DELETE ON change_log_floor FROM store_app;
 
--- El historial de migraciones es del rol migrador. GRANT ON ALL TABLES barre
--- tambien goose_db_version, porque goose la crea antes de aplicar la primera
--- migracion; sin este REVOKE, la aplicacion podria falsificar el historial.
+-- The migration history belongs to the migrator role. GRANT ON ALL TABLES also
+-- sweeps up goose_db_version, because goose creates it before applying the
+-- first migration; without this REVOKE the application could forge history.
 DO $$
 BEGIN
   IF EXISTS (
@@ -339,9 +338,9 @@ BEGIN
 END
 $$;
 
--- Tablas creadas por migraciones futuras heredan el mismo trato por defecto.
--- OJO: toda migracion que agregue una tabla transaccional debe hacer su propio
--- REVOKE explicito. Esto solo cubre el GRANT base.
+-- Tables added by future migrations inherit the same base treatment.
+-- NOTE: any migration adding a transactional table must issue its own explicit
+-- REVOKE. This only covers the base GRANT.
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
   GRANT SELECT, INSERT ON TABLES TO store_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public
@@ -376,6 +375,6 @@ DROP TABLE IF EXISTS products;
 DROP TABLE IF EXISTS sessions;
 DROP TABLE IF EXISTS users;
 
--- El rol es a nivel de cluster y puede estar en uso por otra base; no se borra.
+-- The role is cluster-wide and may be in use by another database; not dropped.
 
 -- +goose StatementEnd
