@@ -1,17 +1,17 @@
-// Package testdb da a cada test una base Postgres real y efimera.
+// Package testdb gives every test a real, throwaway Postgres database.
 //
-// Sin mocks, por decision explicita: mockear la base haria que los tests mas
-// valiosos del proyecto (convergencia del feed, idempotencia bajo transacciones
-// concurrentes) prueben el mock en vez del sistema.
+// No mocks, by explicit decision: mocking the database would make the project's
+// most valuable tests (feed convergence, idempotency under concurrent
+// transactions) exercise the mock instead of the system.
 //
-// Como funciona: una vez por corrida se crea store_test_template y se le
-// aplican las migraciones. Cada test hace CREATE DATABASE ... TEMPLATE, que
-// Postgres resuelve copiando archivos: ~30 ms, aislamiento total.
+// How it works: once per run it creates store_test_template and migrates it.
+// Each test then runs CREATE DATABASE ... TEMPLATE, which Postgres resolves by
+// copying files: ~30 ms, full isolation.
 //
-// Lo que NO se hace: envolver cada test en una transaccion y revertir. Seria
-// mas rapido, pero volveria imposibles los tests que necesitan transacciones
-// reales, separadas y commiteando en paralelo, que son justamente los que
-// justifican todo el diseño.
+// What it deliberately does NOT do: wrap each test in a transaction and roll
+// back. That would be faster, but it would make the tests that need real,
+// separate, concurrently committing transactions impossible to write, and those
+// are exactly the ones that justify the whole design.
 package testdb
 
 import (
@@ -33,12 +33,13 @@ import (
 const (
 	templateName = "store_test_template"
 
-	// La contraseña de store_app en tests. En produccion la asigna la infra;
-	// aca hace falta porque la migracion crea el rol NOLOGIN a proposito.
+	// store_app's password in tests. In production the infrastructure assigns
+	// it; here it is needed because the migration creates the role NOLOGIN on
+	// purpose, so no secret lives in the repository.
 	testAppPassword = "test_app_pwd"
 )
 
-// defaultAdminURL apunta al Postgres de compose.dev.yml.
+// defaultAdminURL points at the Postgres from compose.dev.yml.
 const defaultAdminURL = "postgres://store_migrator:dev_only_no_usar_en_produccion@localhost:5433/postgres?sslmode=disable"
 
 var (
@@ -46,40 +47,40 @@ var (
 	setupErr  error
 )
 
-// DB es el par de conexiones que recibe un test.
+// DB is the pair of connections a test receives.
 type DB struct {
-	// App conecta como store_app: el MISMO rol que usa la API en produccion.
+	// App connects as store_app: the SAME role the API uses in production.
 	//
-	// Es deliberado. Si los tests corrieran como superusuario, un GRANT
-	// faltante pasaria inadvertido hasta el despliegue, y un UPDATE indebido
-	// nunca se detectaria porque el superusuario puede hacerlo.
+	// This is deliberate. If tests ran as superuser, a missing GRANT would go
+	// unnoticed until deploy, and an improper UPDATE would never be caught
+	// because a superuser is allowed to do it.
 	App *pgxpool.Pool
 
-	// Admin conecta como store_migrator. Se usa solo para preparar escenarios
-	// y para aserciones que necesitan ver mas de lo que la aplicacion ve.
+	// Admin connects as store_migrator. It is used only to set up scenarios and
+	// for assertions that need to see more than the application can.
 	Admin *pgxpool.Pool
 
-	// Name es el nombre de la base efimera, util al depurar un test.
+	// Name is the throwaway database name, handy when debugging a test.
 	Name string
 
-	// AppURL sirve para abrir conexiones sueltas cuando un test necesita
-	// transacciones concurrentes de verdad (el caso del feed).
+	// AppURL lets a test open standalone connections when it needs genuinely
+	// concurrent transactions (the feed convergence case).
 	AppURL string
 }
 
-// New crea una base efimera para este test y la borra al terminar.
+// New creates a throwaway database for this test and drops it afterwards.
 //
-//	func TestAlgo(t *testing.T) {
+//	func TestSomething(t *testing.T) {
 //	    tdb := testdb.New(t)
-//	    // usar tdb.App como si fuera el pool de produccion
+//	    // use tdb.App as if it were the production pool
 //	}
 func New(t *testing.T) *DB {
 	t.Helper()
 
 	setupOnce.Do(func() { setupErr = ensureTemplate() })
 	if setupErr != nil {
-		t.Fatalf("no se pudo preparar la base plantilla: %v\n\n"+
-			"¿Esta levantado Postgres?  docker compose -f compose.dev.yml up -d", setupErr)
+		t.Fatalf("could not prepare the template database: %v\n\n"+
+			"Is Postgres running?  docker compose -f compose.dev.yml up -d", setupErr)
 	}
 
 	ctx := context.Background()
@@ -87,13 +88,13 @@ func New(t *testing.T) *DB {
 
 	admin, err := pgxpool.New(ctx, adminURL())
 	if err != nil {
-		t.Fatalf("no se pudo conectar como administrador: %v", err)
+		t.Fatalf("could not connect as admin: %v", err)
 	}
 	defer admin.Close()
 
 	if _, err := admin.Exec(ctx,
 		fmt.Sprintf("CREATE DATABASE %s TEMPLATE %s", name, templateName)); err != nil {
-		t.Fatalf("no se pudo crear la base %s: %v", name, err)
+		t.Fatalf("could not create database %s: %v", name, err)
 	}
 
 	appURL := urlForDatabase(adminURL(), name, "store_app", testAppPassword)
@@ -101,12 +102,12 @@ func New(t *testing.T) *DB {
 
 	appPool, err := pgxpool.New(ctx, appURL)
 	if err != nil {
-		t.Fatalf("no se pudo abrir el pool de aplicacion: %v", err)
+		t.Fatalf("could not open the application pool: %v", err)
 	}
 	adminPool, err := pgxpool.New(ctx, adminDBURL)
 	if err != nil {
 		appPool.Close()
-		t.Fatalf("no se pudo abrir el pool de administracion: %v", err)
+		t.Fatalf("could not open the admin pool: %v", err)
 	}
 
 	t.Cleanup(func() {
@@ -118,60 +119,60 @@ func New(t *testing.T) *DB {
 
 		cleaner, err := pgxpool.New(cleanupCtx, adminURL())
 		if err != nil {
-			t.Logf("no se pudo conectar para limpiar %s: %v", name, err)
+			t.Logf("could not connect to clean up %s: %v", name, err)
 			return
 		}
 		defer cleaner.Close()
 
-		// Cortar conexiones rezagadas: un test que abrio conexiones sueltas y
-		// no las cerro impediria el DROP y dejaria basura entre corridas.
+		// Kill stragglers: a test that opened standalone connections and did
+		// not close them would block the DROP and leave garbage between runs.
 		_, _ = cleaner.Exec(cleanupCtx,
 			`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 			 WHERE datname = $1 AND pid <> pg_backend_pid()`, name)
 
 		if _, err := cleaner.Exec(cleanupCtx,
 			fmt.Sprintf("DROP DATABASE IF EXISTS %s", name)); err != nil {
-			t.Logf("no se pudo borrar la base %s: %v", name, err)
+			t.Logf("could not drop database %s: %v", name, err)
 		}
 	})
 
 	return &DB{App: appPool, Admin: adminPool, Name: name, AppURL: appURL}
 }
 
-// ensureTemplate crea la base plantilla y le aplica las migraciones. Corre una
-// sola vez por proceso de test.
+// ensureTemplate creates the template database and migrates it. Runs once per
+// test process.
 func ensureTemplate() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
 	defer cancel()
 
 	admin, err := pgxpool.New(ctx, adminURL())
 	if err != nil {
-		return fmt.Errorf("conexion de administracion: %w", err)
+		return fmt.Errorf("admin connection: %w", err)
 	}
 	defer admin.Close()
 
-	// Se rehace en cada corrida: una plantilla vieja con un esquema anterior es
-	// una fuente de fallos fantasma dificiles de diagnosticar.
+	// Rebuilt on every run: a stale template carrying an older schema is a
+	// source of phantom failures that are painful to diagnose.
 	_, _ = admin.Exec(ctx,
 		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
 		 WHERE datname = $1 AND pid <> pg_backend_pid()`, templateName)
 	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+templateName); err != nil {
-		return fmt.Errorf("no se pudo borrar la plantilla anterior: %w", err)
+		return fmt.Errorf("could not drop the previous template: %w", err)
 	}
 	if _, err := admin.Exec(ctx, "CREATE DATABASE "+templateName); err != nil {
-		return fmt.Errorf("no se pudo crear la plantilla: %w", err)
+		return fmt.Errorf("could not create the template: %w", err)
 	}
 
 	templateURL := urlForDatabase(adminURL(), templateName, "", "")
 	if err := db.Migrate(ctx, templateURL); err != nil {
-		return fmt.Errorf("migraciones sobre la plantilla: %w", err)
+		return fmt.Errorf("migrating the template: %w", err)
 	}
 
-	// La migracion crea store_app NOLOGIN a proposito (las credenciales las
-	// pone la infraestructura). En tests hay que darle acceso.
+	// The migration creates store_app NOLOGIN on purpose (credentials come from
+	// the infrastructure). Tests have to grant it access.
 	if _, err := admin.Exec(ctx,
 		fmt.Sprintf("ALTER ROLE store_app LOGIN PASSWORD '%s'", testAppPassword)); err != nil {
-		return fmt.Errorf("no se pudo habilitar store_app: %w", err)
+		return fmt.Errorf("could not enable store_app: %w", err)
 	}
 
 	return nil
@@ -184,8 +185,8 @@ func adminURL() string {
 	return defaultAdminURL
 }
 
-// urlForDatabase reescribe la URL para apuntar a otra base y, opcionalmente,
-// con otro usuario.
+// urlForDatabase rewrites the URL to point at another database and, optionally,
+// authenticate as another user.
 func urlForDatabase(base, database, user, password string) string {
 	u, err := url.Parse(base)
 	if err != nil {

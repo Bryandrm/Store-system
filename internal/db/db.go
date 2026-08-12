@@ -1,9 +1,9 @@
-// Package db concentra el acceso a Postgres: el pool, las migraciones
-// embebidas y el helper transaccional.
+// Package db owns Postgres access: the pool, the embedded migrations and the
+// transaction helper.
 //
-// Regla que sostiene la integridad del backend: TODA escritura pasa por
-// WithTx. Nada de pool.Exec suelto en codigo de dominio. Una operacion es una
-// transaccion, y si algo falla no queda nada a medias.
+// The rule that holds backend integrity together: EVERY write goes through
+// WithTx. No loose pool.Exec in domain code. One operation is one transaction,
+// and if anything fails nothing is left half-applied.
 package db
 
 import (
@@ -24,11 +24,11 @@ import (
 //go:embed migrations/*.sql
 var migrationsFS embed.FS
 
-// Config son los parametros del pool.
+// Config holds the pool parameters.
 //
-// MaxConns es deliberadamente bajo: cada backend de Postgres es un proceso de
-// 5-10 MB de RSS y la e2-micro tiene 1 GB en total. Un max_connections
-// descuidado es la forma mas comun de tumbar por OOM una caja chica.
+// MaxConns is deliberately low: every Postgres backend is a process costing
+// 5-10 MB of RSS and the e2-micro has 1 GB total. A careless max_connections is
+// the most common way to OOM a small box.
 type Config struct {
 	URL             string
 	MaxConns        int32
@@ -37,7 +37,7 @@ type Config struct {
 	MaxConnIdleTime time.Duration
 }
 
-// DefaultConfig devuelve los valores pensados para la e2-micro.
+// DefaultConfig returns values sized for the e2-micro.
 func DefaultConfig(url string) Config {
 	return Config{
 		URL:             url,
@@ -48,11 +48,11 @@ func DefaultConfig(url string) Config {
 	}
 }
 
-// NewPool abre el pool y verifica que la base responda.
+// NewPool opens the pool and verifies the database answers.
 func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	poolCfg, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("URL de base invalida: %w", err)
+		return nil, fmt.Errorf("invalid database URL: %w", err)
 	}
 
 	poolCfg.MaxConns = cfg.MaxConns
@@ -60,94 +60,93 @@ func NewPool(ctx context.Context, cfg Config) (*pgxpool.Pool, error) {
 	poolCfg.MaxConnLifetime = cfg.MaxConnLifetime
 	poolCfg.MaxConnIdleTime = cfg.MaxConnIdleTime
 
-	// Nada en el sistema puede depender de la zona horaria del servidor: todo
-	// se guarda en UTC y se renderiza en America/El_Salvador en el cliente.
+	// Nothing in the system may depend on the server's timezone: everything is
+	// stored in UTC and rendered in America/El_Salvador on the client.
 	poolCfg.ConnConfig.RuntimeParams["timezone"] = "UTC"
 
 	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
-		return nil, fmt.Errorf("no se pudo crear el pool: %w", err)
+		return nil, fmt.Errorf("could not create pool: %w", err)
 	}
 
 	pingCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	if err := pool.Ping(pingCtx); err != nil {
 		pool.Close()
-		return nil, fmt.Errorf("la base no responde: %w", err)
+		return nil, fmt.Errorf("database is not responding: %w", err)
 	}
 
 	return pool, nil
 }
 
-// Migrate aplica las migraciones embebidas en el binario.
+// Migrate applies the migrations embedded in the binary.
 //
-// Corre al arrancar la API, con una sola replica, y deja registrada la version
-// en el log. No hay job de migracion separado: un binario, un despliegue.
+// It runs at API startup, with a single replica, and logs the resulting
+// version. There is no separate migration job: one binary, one deploy.
 func Migrate(ctx context.Context, url string) error {
 	goose.SetBaseFS(migrationsFS)
 	if err := goose.SetDialect("postgres"); err != nil {
-		return fmt.Errorf("dialecto de goose: %w", err)
+		return fmt.Errorf("goose dialect: %w", err)
 	}
 
-	// goose usa database/sql; stdlib.OpenDB envuelve la config de pgx sin
-	// necesidad de un driver aparte.
+	// goose speaks database/sql; stdlib.OpenDB wraps the pgx config so no
+	// separate driver is needed.
 	connCfg, err := pgx.ParseConfig(url)
 	if err != nil {
-		return fmt.Errorf("URL de base invalida: %w", err)
+		return fmt.Errorf("invalid database URL: %w", err)
 	}
 	sqlDB := stdlib.OpenDB(*connCfg)
 	defer sqlDB.Close()
 
 	if err := goose.UpContext(ctx, sqlDB, "migrations"); err != nil {
-		return fmt.Errorf("fallo al migrar: %w", err)
+		return fmt.Errorf("migration failed: %w", err)
 	}
 
 	version, err := goose.GetDBVersionContext(ctx, sqlDB)
 	if err != nil {
-		return fmt.Errorf("no se pudo leer la version de la base: %w", err)
+		return fmt.Errorf("could not read database version: %w", err)
 	}
-	slog.Info("migraciones aplicadas", "version", version)
+	slog.Info("migrations applied", "version", version)
 
 	return nil
 }
 
-// MigrationsFS expone las migraciones para el harness de tests, que las aplica
-// sobre la base plantilla.
+// MigrationsFS exposes the migrations to the test harness, which applies them
+// to the template database.
 func MigrationsFS() embed.FS { return migrationsFS }
 
-// Querier es lo que comparten *pgxpool.Pool y pgx.Tx.
+// Querier is what *pgxpool.Pool and pgx.Tx have in common.
 //
-// Es la unica interfaz del proyecto, y existe porque tiene dos
-// implementaciones reales: las funciones de dominio corren dentro de una
-// transaccion cuando entran por /sync, y sueltas contra el pool cuando entran
-// por una ruta REST administrativa.
+// It is the project's only interface, and it exists because it genuinely has
+// two implementations: domain functions run inside a transaction when they
+// arrive through /sync, and against the pool when they arrive through an
+// administrative REST route.
 type Querier interface {
 	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// WithTx ejecuta fn dentro de una transaccion y garantiza el rollback ante
-// error o panic.
+// WithTx runs fn inside a transaction and guarantees rollback on error or panic.
 //
-// El rollback en el defer no es decorativo: sin el, un panic dentro de fn
-// dejaria la transaccion abierta, y una transaccion abierta fija el xmin del
-// snapshot, lo que CONGELA el feed de sincronizacion para todos los
-// dispositivos hasta que salte idle_in_transaction_session_timeout.
+// The deferred rollback is not decorative: without it, a panic inside fn would
+// leave the transaction open, and an open transaction pins the snapshot's xmin,
+// which FREEZES the sync feed for every device until
+// idle_in_transaction_session_timeout fires.
 func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) (err error) {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("no se pudo iniciar la transaccion: %w", err)
+		return fmt.Errorf("could not begin transaction: %w", err)
 	}
 
 	defer func() {
 		if p := recover(); p != nil {
 			_ = tx.Rollback(ctx)
-			panic(p) // se re-lanza: el middleware de recover lo convierte en 500
+			panic(p) // re-raised: the recover middleware turns it into a 500
 		}
 		if err != nil {
 			if rbErr := tx.Rollback(ctx); rbErr != nil && !errors.Is(rbErr, pgx.ErrTxClosed) {
-				slog.Error("fallo el rollback", "error", rbErr)
+				slog.Error("rollback failed", "error", rbErr)
 			}
 		}
 	}()
@@ -157,7 +156,7 @@ func WithTx(ctx context.Context, pool *pgxpool.Pool, fn func(pgx.Tx) error) (err
 	}
 
 	if err = tx.Commit(ctx); err != nil {
-		return fmt.Errorf("no se pudo confirmar la transaccion: %w", err)
+		return fmt.Errorf("could not commit transaction: %w", err)
 	}
 	return nil
 }
