@@ -1,0 +1,34 @@
+# compiled binaries
+/storeapi
+/seed
+/verify
+/bin/
+/dist/
+
+# Go
+*.test
+*.out
+coverage.txt
+
+# secrets and local configuration
+.env
+.env.*
+!.env.example
+
+# frontend
+node_modules/
+/web/dist/
+/web/.vite/
+*.tsbuildinfo
+
+# Playwright
+/playwright-report/
+/test-results/
+/e2e/.auth/
+
+# macOS
+.DS_Store
+
+# editors
+.idea/
+*.swp

@@ -1,0 +1,60 @@
+# Postgres for local development and tests.
+#
+# The API does not run here: in development it runs via `go run ./cmd/storeapi`
+# for fast rebuilds. This file only brings up the database.
+#
+# Production lives in compose.yml, which does include api + caddy along with the
+# memory limits the e2-micro needs.
+
+name: store-system-dev
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    container_name: store-postgres-dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: store_migrator
+      POSTGRES_PASSWORD: dev_only_no_usar_en_produccion
+      POSTGRES_DB: store_system
+      TZ: UTC
+      # --data-checksums is a one-shot decision: it cannot be enabled later
+      # without recreating the cluster. It detects silent disk corruption.
+      # --locale=C avoids glibc/ICU collations entirely; case-insensitive
+      # search is done with lower() plus functional indexes.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8 --data-checksums"
+    # 5433 rather than 5432, so it does not collide with another Postgres that
+    # may already be installed on the machine.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      # Gotcha #1: from Postgres 18 on, the official images store data in a
+      # subdirectory named after the major version so that pg_upgrade --link
+      # works without crossing mount boundaries. Mounting at
+      # /var/lib/postgresql/data (the convention up to 17) leaves the container
+      # restarting in a loop.
+      - postgres_dev_data:/var/lib/postgresql
+    command:
+      - postgres
+      # An open transaction pins the snapshot's xmin, which freezes the sync
+      # feed. These two timeouts are the protection against that.
+      - -c
+      - idle_in_transaction_session_timeout=30s
+      - -c
+      - statement_timeout=15s
+      - -c
+      - timezone=UTC
+      # Tests create and drop databases with CREATE DATABASE ... TEMPLATE.
+      - -c
+      - max_connections=50
+      - -c
+      - log_min_duration_statement=500ms
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U store_migrator -d store_system"]
+      interval: 3s
+      timeout: 3s
+      retries: 15
+      start_period: 10s
+
+volumes:
+  postgres_dev_data:

@@ -1,0 +1,113 @@
+{
+  "_comentario": [
+    "Fixture COMPARTIDO entre internal/money/money_test.go y src/domain/money.test.ts.",
+    "Es lo unico que impide que el cliente le diga un total al comprador y el",
+    "servidor guarde otro. Si agregas un caso, corre las dos suites.",
+    "Ver docs/TESTING.md y ADR-006."
+  ],
+
+  "round_half_up": [
+    { "nombre": "cero",                        "numer": 0,     "denom": 1000, "want": 0 },
+    { "nombre": "residuo minimo baja",         "numer": 1,     "denom": 1000, "want": 0 },
+    { "nombre": "justo debajo del empate",     "numer": 499,   "denom": 1000, "want": 0 },
+    { "nombre": "empate exacto sube",          "numer": 500,   "denom": 1000, "want": 1 },
+    { "nombre": "justo encima del empate",     "numer": 501,   "denom": 1000, "want": 1 },
+    { "nombre": "division exacta",             "numer": 1000,  "denom": 1000, "want": 1 },
+    { "nombre": "1.499 baja",                  "numer": 1499,  "denom": 1000, "want": 1 },
+    { "nombre": "1.5 sube",                    "numer": 1500,  "denom": 1000, "want": 2 },
+    { "nombre": "2.5 sube (NO es half-even)",  "numer": 2500,  "denom": 1000, "want": 3 },
+    { "nombre": "3.5 sube",                    "numer": 3500,  "denom": 1000, "want": 4 },
+    { "nombre": "denominador impar, empate",   "numer": 5,     "denom": 10,   "want": 1 },
+    { "nombre": "denominador impar, baja",     "numer": 4,     "denom": 10,   "want": 0 },
+    { "nombre": "denominador 1 es identidad",  "numer": 12345, "denom": 1,    "want": 12345 }
+  ],
+
+  "line_total": [
+    { "nombre": "una bolsa de 0.25",          "unit_price_cents": 25,  "qty_milli": 1000, "want": 25 },
+    { "nombre": "dos bolsas de 0.25",         "unit_price_cents": 25,  "qty_milli": 2000, "want": 50 },
+    { "nombre": "diez bolsas de 0.25",        "unit_price_cents": 25,  "qty_milli": 10000, "want": 250 },
+    { "nombre": "media bolsa redondea arriba", "unit_price_cents": 25,  "qty_milli": 500,  "want": 13 },
+    { "nombre": "bolsa y media redondea arriba", "unit_price_cents": 25, "qty_milli": 1500, "want": 38 },
+    { "nombre": "tres de 0.50",               "unit_price_cents": 50,  "qty_milli": 3000, "want": 150 },
+    { "nombre": "precio de 1.00 por 1.5",     "unit_price_cents": 100, "qty_milli": 1500, "want": 150 },
+    { "nombre": "cantidad infima da cero",    "unit_price_cents": 1,   "qty_milli": 1,    "want": 0 },
+    { "nombre": "precio cero",                "unit_price_cents": 0,   "qty_milli": 5000, "want": 0 },
+    { "nombre": "cantidad cero",              "unit_price_cents": 25,  "qty_milli": 0,    "want": 0 },
+    { "nombre": "residuo diminuto baja",      "unit_price_cents": 999, "qty_milli": 999,  "want": 998 },
+    { "nombre": "venta grande",               "unit_price_cents": 350, "qty_milli": 24000, "want": 8400 }
+  ],
+
+  "allocate_payment": [
+    {
+      "nombre": "cubre la primera y parte de la segunda",
+      "payment_cents": 500,
+      "debts": [
+        { "ref_id": "venta-a", "amount_cents": 300 },
+        { "ref_id": "venta-b", "amount_cents": 400 }
+      ],
+      "want_allocations": [
+        { "ref_id": "venta-a", "amount_cents": 300 },
+        { "ref_id": "venta-b", "amount_cents": 200 }
+      ],
+      "want_credit_cents": 0
+    },
+    {
+      "nombre": "sobrepago deja saldo a favor",
+      "payment_cents": 1000,
+      "debts": [
+        { "ref_id": "venta-a", "amount_cents": 300 },
+        { "ref_id": "venta-b", "amount_cents": 400 }
+      ],
+      "want_allocations": [
+        { "ref_id": "venta-a", "amount_cents": 300 },
+        { "ref_id": "venta-b", "amount_cents": 400 }
+      ],
+      "want_credit_cents": 300
+    },
+    {
+      "nombre": "sin deudas todo es saldo a favor",
+      "payment_cents": 100,
+      "debts": [],
+      "want_allocations": [],
+      "want_credit_cents": 100
+    },
+    {
+      "nombre": "pago de cero no toca nada",
+      "payment_cents": 0,
+      "debts": [{ "ref_id": "venta-a", "amount_cents": 500 }],
+      "want_allocations": [],
+      "want_credit_cents": 0
+    },
+    {
+      "nombre": "cancela exactamente una deuda",
+      "payment_cents": 250,
+      "debts": [{ "ref_id": "venta-a", "amount_cents": 250 }],
+      "want_allocations": [{ "ref_id": "venta-a", "amount_cents": 250 }],
+      "want_credit_cents": 0
+    },
+    {
+      "nombre": "un centavo va a la deuda mas vieja",
+      "payment_cents": 1,
+      "debts": [
+        { "ref_id": "venta-a", "amount_cents": 3 },
+        { "ref_id": "venta-b", "amount_cents": 5 }
+      ],
+      "want_allocations": [{ "ref_id": "venta-a", "amount_cents": 1 }],
+      "want_credit_cents": 0
+    },
+    {
+      "nombre": "salta deudas ya en cero",
+      "payment_cents": 200,
+      "debts": [
+        { "ref_id": "venta-a", "amount_cents": 0 },
+        { "ref_id": "venta-b", "amount_cents": 150 },
+        { "ref_id": "venta-c", "amount_cents": 100 }
+      ],
+      "want_allocations": [
+        { "ref_id": "venta-b", "amount_cents": 150 },
+        { "ref_id": "venta-c", "amount_cents": 50 }
+      ],
+      "want_credit_cents": 0
+    }
+  ]
+}
