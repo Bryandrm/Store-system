@@ -33,10 +33,16 @@ import (
 const (
 	templateName = "store_test_template"
 
-	// store_app's password in tests. In production the infrastructure assigns
-	// it; here it is needed because the migration creates the role NOLOGIN on
-	// purpose, so no secret lives in the repository.
-	testAppPassword = "test_app_pwd"
+	// store_app's password for local use. In production the infrastructure
+	// assigns it; here it is needed because the migration creates the role
+	// NOLOGIN on purpose, so no secret lives in the repository.
+	//
+	// It MUST match the password the development server uses, because Postgres
+	// roles are cluster-wide: the ALTER ROLE below reaches every database in
+	// the instance, not just the throwaway ones. Using a different value here
+	// silently locks the running dev server out of its own database the moment
+	// anybody runs the tests.
+	testAppPassword = "dev_app"
 )
 
 // defaultAdminURL points at the Postgres from compose.dev.yml.

@@ -133,3 +133,28 @@ replaced `onlyBuiltDependencies` (a list) with **`allowBuilds` (a map)** in
 `pnpm-workspace.yaml`. The older spellings are silently ignored — pnpm warns
 about the `package.json` field but not about the rest, so the install keeps
 failing with the same message while the config looks correct.
+
+---
+
+## #6 — Running the tests locks the dev server out of its database
+
+**Symptom.** The API starts, applies migrations, and then dies with
+`failed SASL auth: FATAL: password authentication failed for user "store_app"`.
+It worked minutes earlier and nothing in the config changed. The trigger, once
+you spot it, is having run `go test ./...` in between.
+
+**Cause.** Postgres roles are **cluster-wide**, like transaction ids (see #2).
+The test harness calls `ALTER ROLE store_app LOGIN PASSWORD …` so tests can
+connect as the production role and genuinely exercise the grants — but that
+statement reaches every database in the instance, not just the throwaway ones it
+creates.
+
+**Fix.** The harness and the development server use the same password constant,
+and `internal/testdb/testdb.go` says why. Production is unaffected: the password
+there comes from the infrastructure, and neither the tests nor the dev server
+run against it.
+
+**The general lesson.** A test harness that touches anything cluster-scoped —
+roles, tablespaces, replication slots — is not isolated just because it creates
+its own database. Both of this project's nastiest surprises came from assuming
+a per-database boundary that Postgres does not draw.

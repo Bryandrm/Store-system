@@ -54,6 +54,12 @@ importers:
       vitest:
         specifier: ^3.2.4
         version: 3.2.7(@types/node@26.2.0)(jiti@2.7.0)(lightningcss@1.32.0)(terser@5.50.0)
+      workbox-precaching:
+        specifier: ^7.4.1
+        version: 7.4.1
+      workbox-window:
+        specifier: ^7.4.1
+        version: 7.4.1
 
 packages:
 
