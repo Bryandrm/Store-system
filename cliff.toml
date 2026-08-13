@@ -1,0 +1,66 @@
+# git-cliff configuration.
+#
+# The changelog is generated from conventional commits and grouped by module, so
+# it never has to be maintained by hand and cannot drift from what was actually
+# shipped.
+#
+#   git cliff --tag v0.1.0 -o CHANGELOG.md
+
+[changelog]
+header = """
+# Changelog
+
+Generated from conventional commits with [git-cliff](https://git-cliff.org).
+Grouped by module: the scope of each commit is the module it touched.
+"""
+
+body = """
+{% if version %}
+## {{ version | trim_start_matches(pat="v") }} — {{ timestamp | date(format="%Y-%m-%d") }}
+{% else %}
+## Unreleased
+{% endif %}
+
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {% if commit.scope %}**{{ commit.scope }}**: {% endif %}{{ commit.message | upper_first }}\
+{% endfor %}
+{% endfor %}
+"""
+
+trim = true
+
+[git]
+conventional_commits = true
+filter_unconventional = true
+protect_breaking_commits = true
+
+# Grouping is by TYPE; the module comes from the scope and is rendered inline.
+# Grouping by scope instead was tried and rejected: a release then reads as a
+# list of modules rather than as a list of changes, which is not how anyone
+# reads a changelog.
+commit_parsers = [
+  { message = "^feat", group = "Features" },
+  { message = "^fix", group = "Fixes" },
+  { message = "^perf", group = "Performance" },
+  { message = "^refactor", group = "Refactoring" },
+  { message = "^docs", group = "Documentation" },
+  { message = "^test", group = "Tests" },
+  { message = "^chore\\(release\\)", skip = true },
+  { message = "^chore", group = "Chores" },
+  { body = ".*security", group = "Security" },
+]
+
+filter_commits = false
+tag_pattern = "v[0-9]*"
+sort_commits = "oldest"
+
+# Valid scopes, kept here as documentation. commitlint enforces them.
+#
+#   sales · inventory · credit · restock · profiles
+#   sync  · api       · infra  · docs
+#
+# The scope is the module, not the layer: a change that touches the Go handler
+# and the React screen for the same feature is one commit with one scope, not
+# two commits split by technology.

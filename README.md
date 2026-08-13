@@ -39,17 +39,28 @@ docker compose -f compose.dev.yml up -d
 go test ./... -race
 ```
 
-Requirements: Go 1.26+, Docker or Colima, Node 22+ (once the frontend exists).
+Requirements: Go 1.26+, Docker or Colima, Node 22+, pnpm.
+
+```bash
+cd web
+pnpm install
+pnpm dev        # :5173, proxies /api to :8080
+pnpm test
+```
 
 ## Documentation
 
 | File | Contents |
 |---|---|
+| [CLAUDE.md](CLAUDE.md) | Operating manual: principles, layout, things not to do |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | The four diagrams and where each decision comes from |
-| `docs/DECISIONS.md` | ADRs *(pending)* |
-| `docs/SYNC.md` | The protocol and its correctness argument *(pending)* |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | ADRs, including the rejected alternatives |
+| [docs/SYNC.md](docs/SYNC.md) | The protocol and its correctness argument |
+| [docs/API.md](docs/API.md) | The response contract and the error catalog |
+| [docs/TESTING.md](docs/TESTING.md) | The four layers, and what only a real iPhone can check |
+| [docs/GOTCHAS.md](docs/GOTCHAS.md) | Numbered ledger of traps already paid for |
+| [docs/BACKLOG.md](docs/BACKLOG.md) | What is next, and what is deliberately not built |
 | `docs/DEPLOY.md` | Deployment and restore runbook *(pending)* |
-| `docs/GOTCHAS.md` | Numbered ledger of traps already paid for *(pending)* |
 
 ## Status
 
@@ -59,12 +70,16 @@ In development, milestone 1 (**"Sell and see the day"**).
 |---|---|
 | Schema, ledgers and derived views | ✅ migrated and tested |
 | Append-only enforcement via grants | ✅ 12 tables verified in CI |
-| Money arithmetic + shared fixture | ✅ |
-| Throwaway database harness | ✅ |
+| Money arithmetic + shared fixture | ✅ verified by sabotage |
+| Throwaway database harness | ✅ runs as the production role |
 | HTTP contract | ✅ |
-| Authentication | ⬜ |
-| Sales and synchronization | ⬜ |
-| PWA | ⬜ |
+| Authentication | ✅ opaque tokens, argon2id, rate limited |
+| Sales, sync feed and bootstrap | ✅ verified end to end |
+| PWA: local replica, outbox, sync engine | ✅ |
+| PWA: sell screen and day view | ✅ builds and runs, not yet exercised |
+| Playwright | ⬜ |
+| `cmd/verify` and integration tests | ⬜ |
+| Deployment | ⬜ |
 
 ## Conventions
 

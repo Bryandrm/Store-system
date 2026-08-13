@@ -369,9 +369,11 @@ layers end up as ceremony wrapped around a giant file. So the approach here is
 | Money arithmetic + shared fixture | `[x]` 32 cases + property test |
 | Throwaway database harness | `[x]` runs as `store_app` |
 | `httpx` (envelope, errors, middleware) | `[x]` |
-| `auth` (argon2id, opaque tokens) | `[ ]` |
-| `sales` (one sale, one transaction) | `[ ]` |
-| `sync` (apply, feed, bootstrap) | `[ ]` naive feed in M1, `xid8` in M2 |
-| PWA, outbox, sync engine | `[ ]` |
+| `auth` (argon2id, opaque tokens) | `[x]` rate limited, timing-safe |
+| `sales` (one sale, one transaction) | `[x]` |
+| `sync` (apply, feed, bootstrap) | `[x]` `xid8` watermark, shipped ahead of plan |
+| PWA, outbox, sync engine | `[x]` |
+| PWA sell screen and day view | `[x]` builds and runs, not yet exercised |
 | Playwright | `[ ]` |
+| `cmd/verify` and integration tests | `[ ]` |
 | Production infrastructure | `[ ]` |
