@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es-SV">
+  <head>
+    <meta charset="UTF-8" />
+    <!-- viewport-fit=cover plus the safe-area insets in tokens.css keeps the
+         COBRAR button clear of the iPhone home indicator. -->
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1"
+    />
+    <meta name="theme-color" content="#1a1a1a" />
+    <meta name="color-scheme" content="light" />
+
+    <!-- iOS ignores the web app manifest's display mode; these are what make it
+         open without Safari chrome once added to the home screen. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Tienda" />
+    <link rel="apple-touch-icon" href="/icon-192.png" />
+
+    <title>Tienda</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

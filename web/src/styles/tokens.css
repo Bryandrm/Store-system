@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+
+/**
+ * Brutalist visual system, carried over from brutalist player.
+ *
+ * The constraints are the design: no rounded corners, no gradients, no blurred
+ * shadows, a closed palette, transitions under 80ms. What carries the interface
+ * is typography, hard borders and contrast.
+ *
+ * This is a point-of-sale app used one-handed, outdoors, in sunlight, while
+ * handling cash and change. That drives every size here: big tap targets, a
+ * huge total, and no control small enough to miss.
+ */
+
+@theme {
+  /* Warm off-white rather than pure white: less glare in direct sun. */
+  --color-paper: #faf9f7;
+  --color-ink: #1a1a1a;
+  --color-ink-soft: #6b6862;
+  --color-line: #1a1a1a;
+  --color-line-soft: #d6d2ca;
+
+  /* The single accent, used only for the primary action. */
+  --color-accent: #1a1a1a;
+  --color-accent-ink: #faf9f7;
+
+  /* Semantic colors, separate from the accent. */
+  --color-warn: #8a5a00;
+  --color-warn-bg: #fff4dd;
+  --color-danger: #9b1c1c;
+  --color-danger-bg: #fdecec;
+  --color-ok: #1f5c2e;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* Minimum comfortable tap target for a thumb, one-handed. */
+  --spacing-tap: 3.5rem;
+
+  --radius-none: 0;
+}
+
+@layer base {
+  * {
+    border-radius: 0 !important;
+  }
+
+  html {
+    /* Prevents iOS from zooming when a control gets focus. */
+    -webkit-text-size-adjust: 100%;
+    font-family: var(--font-sans);
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-paper);
+    color: var(--color-ink);
+    /* Safe areas keep the primary action clear of the iPhone home indicator. */
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+      env(safe-area-inset-bottom) env(safe-area-inset-left);
+    overscroll-behavior: none;
+    /* No pull-to-refresh: reloading mid-sale is the worst possible accident. */
+  }
+
+  button {
+    font-family: inherit;
+    /* Removes the 300ms tap delay and the grey flash on iOS. */
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  /* Nothing in a POS should be selectable by accident while tapping fast. */
+  button,
+  [role='button'] {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--color-ink);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
+
+@layer utilities {
+  /* Digits that line up in columns: totals, quantities, prices. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .fast {
+    transition-duration: 80ms;
+    transition-timing-function: linear;
+  }
+}
