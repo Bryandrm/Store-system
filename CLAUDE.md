@@ -153,6 +153,7 @@ boundary that does not exist. Written here because it will happen a third time:
 - [docs/DECISIONS.md](docs/DECISIONS.md) — ADRs, including rejected alternatives
 - [docs/SYNC.md](docs/SYNC.md) — the protocol and its correctness argument
 - [docs/API.md](docs/API.md) — the response contract and error catalog
+- [docs/INTEGRITY.md](docs/INTEGRITY.md) — the four levels, and what to do when `cmd/verify` fails
 - [docs/GOTCHAS.md](docs/GOTCHAS.md) — traps already paid for
 - [docs/TESTING.md](docs/TESTING.md) — the four layers, plus what only a real iPhone can check
 - [docs/DEPLOY.md](docs/DEPLOY.md) — deployment and the restore runbook

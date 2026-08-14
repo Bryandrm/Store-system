@@ -58,6 +58,7 @@ pnpm test
 | [docs/SYNC.md](docs/SYNC.md) | The protocol and its correctness argument |
 | [docs/API.md](docs/API.md) | The response contract and the error catalog |
 | [docs/TESTING.md](docs/TESTING.md) | The four layers, and what only a real iPhone can check |
+| [docs/INTEGRITY.md](docs/INTEGRITY.md) | The four levels, and the runbook when `cmd/verify` fails |
 | [docs/GOTCHAS.md](docs/GOTCHAS.md) | Numbered ledger of traps already paid for |
 | [docs/BACKLOG.md](docs/BACKLOG.md) | What is next, and what is deliberately not built |
 | `docs/DEPLOY.md` | Deployment and restore runbook *(pending)* |
