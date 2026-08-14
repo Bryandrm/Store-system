@@ -11,12 +11,13 @@ import { useApp } from '@/stores/app'
 import { ApiClient } from '@/sync/client'
 import { SyncEngine } from '@/sync/engine'
 
-const API_BASE = import.meta.env['VITE_API_BASE'] ?? '/api/v1'
+const API_BASE = import.meta.env.VITE_API_BASE ?? '/api/v1'
 
 type Tab = 'sell' | 'today'
 
 export function App({ onUpdateReady }: { onUpdateReady: boolean }) {
   const { hydrated, session, deviceId, syncStatus, hydrate, setSyncStatus, refreshData } = useApp()
+  const setNudgeSync = useApp((s) => s.setNudgeSync)
   const [tab, setTab] = useState<Tab>('sell')
 
   const client = useMemo(() => new ApiClient(API_BASE), [])
@@ -42,14 +43,16 @@ export function App({ onUpdateReady }: { onUpdateReady: boolean }) {
       void refreshData()
     })
 
+    setNudgeSync(() => engine.nudge())
     void engine.start()
 
     return () => {
       unsubscribe()
       engine.stop()
+      setNudgeSync(() => {})
       engineRef.current = null
     }
-  }, [hydrated, session, deviceId, client, setSyncStatus, refreshData])
+  }, [hydrated, session, deviceId, client, setSyncStatus, refreshData, setNudgeSync])
 
   if (!hydrated) {
     return <p className="p-6 text-sm">Cargando…</p>

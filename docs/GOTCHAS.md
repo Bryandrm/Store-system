@@ -158,3 +158,34 @@ run against it.
 roles, tablespaces, replication slots — is not isolated just because it creates
 its own database. Both of this project's nastiest surprises came from assuming
 a per-database boundary that Postgres does not draw.
+
+---
+
+## #7 — Playwright tests a stale build for an hour
+
+**Symptom.** A fix is applied, the source is unmistakably correct, and the
+end-to-end suite keeps failing on it. The accessibility snapshot shows the old
+markup. Rebuilding by hand and inspecting `dist/` shows the new code is there.
+
+**Cause.** Two things compounding.
+
+`reuseExistingServer: true` — the default outside CI — makes Playwright reuse a
+running web server and **skip its command entirely**. Since the command is
+`pnpm build && pnpm preview`, reusing the server means the build never runs and
+the suite exercises whatever `dist/` happened to contain.
+
+And the server survived every attempt to kill it: `pkill -f "vite preview"`
+matches nothing, because the real process is `node …/vite.js preview`. The
+pattern that works is by port:
+
+```bash
+lsof -ti:4173 | xargs kill -9
+```
+
+**Fix.** `reuseExistingServer: false` for the web server, so the build always
+runs. The extra second per run is worth never debugging phantom failures again.
+
+**The general lesson.** When a fix "does not take", verify what is actually
+being executed before re-reading the source. The bug was one layer below where
+it was being looked for, and every minute spent re-reading correct code was
+wasted.

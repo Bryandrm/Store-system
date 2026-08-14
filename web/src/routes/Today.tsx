@@ -18,7 +18,11 @@ export function Today() {
           <span className="text-ink-soft text-xs font-bold tracking-wide uppercase">
             Ventas de hoy
           </span>
-          <p className="tnum text-4xl leading-none font-black">{formatCents(total)}</p>
+          {/* An <output>, like the cart total: both are computed values, and
+              assistive technology should announce them the same way. */}
+          <output className="tnum block text-4xl leading-none font-black">
+            {formatCents(total)}
+          </output>
         </div>
         <span className="tnum text-ink-soft text-sm">
           {todaysSales.length} {todaysSales.length === 1 ? 'venta' : 'ventas'}

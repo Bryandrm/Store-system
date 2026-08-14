@@ -55,7 +55,7 @@ type Service struct {
 
 // NewService builds the auth service. Setting trustProxy is a deployment
 // decision: true behind Caddy, false when the API is exposed directly.
-func NewService(pool *pgxpool.Pool, trustProxy bool) (*Service, error) {
+func NewService(pool *pgxpool.Pool, trustProxy bool, limits Limits) (*Service, error) {
 	dummy, err := HashPassword("this password is never valid for any account")
 	if err != nil {
 		return nil, err
@@ -63,8 +63,8 @@ func NewService(pool *pgxpool.Pool, trustProxy bool) (*Service, error) {
 
 	return &Service{
 		pool:       pool,
-		byIP:       newLoginLimiter(time.Minute/perIPPerMinute, perIPPerMinute),
-		byUsername: newLoginLimiter(time.Hour/perUsernamePerHour, perUsernamePerHour),
+		byIP:       newLoginLimiter(time.Minute/time.Duration(limits.PerIPPerMinute), limits.PerIPPerMinute),
+		byUsername: newLoginLimiter(time.Hour/time.Duration(limits.PerUsernamePerHour), limits.PerUsernamePerHour),
 		trustProxy: trustProxy,
 		dummyHash:  dummy,
 	}, nil

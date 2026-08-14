@@ -30,10 +30,20 @@ interface AppState {
   cart: CartLine[]
   syncStatus: SyncStatus | null
 
+  /**
+   * Asks the sync engine to run now.
+   *
+   * Without this, a sale sits in the outbox until the 60 second poll, so the
+   * user sees PENDING for a minute after every sale even on perfect signal.
+   * Set by App when the engine starts; a no-op before then.
+   */
+  nudgeSync: () => void
+
   hydrate: () => Promise<void>
   refreshData: () => Promise<void>
   setSession: (session: Session | null) => Promise<void>
   setSyncStatus: (status: SyncStatus) => void
+  setNudgeSync: (fn: () => void) => void
 
   addToCart: (product: SellableProduct, qtyMilli?: number) => Promise<void>
   setLineQty: (productId: string, qtyMilli: number) => Promise<void>
@@ -51,6 +61,7 @@ export const useApp = create<AppState>((set, get) => ({
   pendingSaleIds: new Set(),
   cart: [],
   syncStatus: null,
+  nudgeSync: () => {},
 
   async hydrate() {
     const [session, storedDeviceId, db] = await Promise.all([
@@ -106,6 +117,10 @@ export const useApp = create<AppState>((set, get) => ({
 
   setSyncStatus(status) {
     set({ syncStatus: status })
+  },
+
+  setNudgeSync(fn) {
+    set({ nudgeSync: fn })
   },
 
   async addToCart(product, qtyMilli = 1000) {

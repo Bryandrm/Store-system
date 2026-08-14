@@ -8,7 +8,7 @@ import { useApp, type SellableProduct } from '@/stores/app'
 
 export function Sell({ onSold }: { onSold: () => void }) {
   const { products, stock, cart, session, deviceId, syncStatus } = useApp()
-  const { addToCart, setLineQty, removeFromCart, clearCart, refreshData } = useApp()
+  const { addToCart, setLineQty, removeFromCart, clearCart, refreshData, nudgeSync } = useApp()
 
   const [editing, setEditing] = useState<{ productId: string; draft: string } | null>(null)
   const [busy, setBusy] = useState(false)
@@ -32,6 +32,10 @@ export function Sell({ onSold }: { onSold: () => void }) {
       })
       await clearCart()
       await refreshData()
+      // Send it now rather than waiting for the poll. With signal the sale
+      // reaches the server in about a second; without one this is a no-op and
+      // the outbox keeps it safe.
+      nudgeSync()
       onSold()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'No se pudo registrar la venta')

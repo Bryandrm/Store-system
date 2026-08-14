@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/bryandrm/store-system/internal/auth"
 )
 
 // Config is the complete runtime configuration.
@@ -39,6 +41,12 @@ type Config struct {
 	Production bool
 
 	ShutdownGrace time.Duration
+
+	// Login rate limits. Production never sets these; the end-to-end suite
+	// does, because it logs in far more often in a minute than a human would
+	// in a week. See internal/auth/ratelimit.go.
+	LoginPerIPPerMinute     int
+	LoginPerUsernamePerHour int
 }
 
 // Load reads the environment and validates it.
@@ -54,6 +62,9 @@ func Load() (Config, error) {
 		TrustProxy:     envBool("TRUST_PROXY", false),
 		Production:     envBool("PRODUCTION", false),
 		ShutdownGrace:  15 * time.Second,
+
+		LoginPerIPPerMinute:     envInt("LOGIN_RATE_PER_IP_PER_MINUTE", auth.DefaultPerIPPerMinute),
+		LoginPerUsernamePerHour: envInt("LOGIN_RATE_PER_USER_PER_HOUR", auth.DefaultPerUsernamePerHour),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -112,4 +123,16 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return out
+}
+
+func envInt(key string, fallback int) int {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(v)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
 }

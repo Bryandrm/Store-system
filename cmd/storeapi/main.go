@@ -54,7 +54,10 @@ func run() error {
 	}
 	defer pool.Close()
 
-	authService, err := auth.NewService(pool, cfg.TrustProxy)
+	authService, err := auth.NewService(pool, cfg.TrustProxy, auth.Limits{
+		PerIPPerMinute:     cfg.LoginPerIPPerMinute,
+		PerUsernamePerHour: cfg.LoginPerUsernamePerHour,
+	})
 	if err != nil {
 		return err
 	}

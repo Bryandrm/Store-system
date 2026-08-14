@@ -7,7 +7,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// Login rate limits.
+// Default login rate limits.
 //
 // These are not optional. HashPassword allocates 19 MiB per call on a box with
 // roughly 950 MB usable, so an unthrottled login route is a memory DoS that
@@ -16,11 +16,32 @@ import (
 // Two independent buckets, because they stop different attacks: per-IP stops
 // one machine hammering the endpoint, per-username stops a slow distributed
 // guess against a specific account.
+//
+// They are overridable because an end-to-end suite logs in far more often than
+// a human ever would, and it hits both buckets within a minute. The defaults
+// stay strict and production never overrides them; only the test environment
+// does. Loosening the shipped values instead would have been the wrong fix to
+// the same problem.
 const (
-	perIPPerMinute      = 5
-	perUsernamePerHour  = 10
+	DefaultPerIPPerMinute     = 5
+	DefaultPerUsernamePerHour = 10
+
 	limiterIdleLifetime = 2 * time.Hour
 )
+
+// Limits configures the login rate limiters.
+type Limits struct {
+	PerIPPerMinute     int
+	PerUsernamePerHour int
+}
+
+// DefaultLimits returns the production values.
+func DefaultLimits() Limits {
+	return Limits{
+		PerIPPerMinute:     DefaultPerIPPerMinute,
+		PerUsernamePerHour: DefaultPerUsernamePerHour,
+	}
+}
 
 type bucket struct {
 	limiter  *rate.Limiter

@@ -42,8 +42,22 @@ export interface SyncStatus {
 
 export type SyncListener = (status: SyncStatus) => void
 
-/** Poll while the app is in the foreground. */
-const FOREGROUND_INTERVAL_MS = 60_000
+/** Poll while the app is in the foreground and everything is settled. */
+const IDLE_INTERVAL_MS = 60_000
+
+/**
+ * How soon to retry when there is unsent work.
+ *
+ * The `online` event is NOT reliable: it can simply never fire, which was
+ * observed while testing a reopened tab. Relying on it means a device that
+ * regains signal keeps showing SIN CONEXIÓN until the idle poll comes round —
+ * up to a minute with sales sitting unsent.
+ *
+ * So when something is pending, the engine retries on its own short backoff
+ * rather than waiting to be told the network came back.
+ */
+const RETRY_MIN_MS = 3_000
+const RETRY_MAX_MS = 60_000
 /** Debounce after a local mutation, so ringing up three items sends once. */
 const MUTATION_DEBOUNCE_MS = 1_000
 /** Beyond this the user's clock is wrong enough to distort reports. */
@@ -60,7 +74,8 @@ export class SyncEngine {
   }
 
   private listeners = new Set<SyncListener>()
-  private intervalId: ReturnType<typeof setInterval> | null = null
+  private timerId: ReturnType<typeof setTimeout> | null = null
+  private retryDelayMs = RETRY_MIN_MS
   private debounceId: ReturnType<typeof setTimeout> | null = null
   private running = false
   private stopped = true
@@ -96,8 +111,25 @@ export class SyncEngine {
       document.addEventListener('visibilitychange', this.onVisibilityChange)
     }
 
-    this.intervalId = setInterval(() => void this.runCycle(), FOREGROUND_INTERVAL_MS)
     void this.runCycle()
+  }
+
+  /**
+   * Schedules the next cycle, sooner when there is unsent work.
+   *
+   * A self-scheduling timer rather than setInterval: the delay has to depend on
+   * what happened last time, and an interval cannot express that.
+   */
+  private scheduleNext(): void {
+    if (this.stopped) return
+    if (this.timerId) clearTimeout(this.timerId)
+
+    const hasWork = this.status.pendingCount > 0 || this.status.failedCount > 0
+    const struggling = this.status.state === 'offline' || this.status.state === 'error'
+
+    const delay = hasWork && struggling ? this.retryDelayMs : IDLE_INTERVAL_MS
+
+    this.timerId = setTimeout(() => void this.runCycle(), delay)
   }
 
   stop(): void {
@@ -107,9 +139,9 @@ export class SyncEngine {
       window.removeEventListener('offline', this.onOffline)
       document.removeEventListener('visibilitychange', this.onVisibilityChange)
     }
-    if (this.intervalId) clearInterval(this.intervalId)
+    if (this.timerId) clearTimeout(this.timerId)
     if (this.debounceId) clearTimeout(this.debounceId)
-    this.intervalId = null
+    this.timerId = null
     this.debounceId = null
   }
 
@@ -195,6 +227,7 @@ export class SyncEngine {
 
       await prune()
       await this.refreshCounts()
+      this.retryDelayMs = RETRY_MIN_MS
       this.update({ state: 'idle', lastSyncAt: now })
 
       // has_more means the server truncated the page at a transaction boundary.
@@ -208,6 +241,9 @@ export class SyncEngine {
       await this.handleFailure(error)
     } finally {
       this.running = false
+      // Reschedule here rather than at the call sites: the delay depends on the
+      // status this cycle just produced, so it can only be decided now.
+      this.scheduleNext()
     }
   }
 
@@ -225,6 +261,9 @@ export class SyncEngine {
         // tries again. This is the normal case with no signal.
         await releaseInflight()
         await this.refreshCounts()
+        // Back off gradually, so a long outage does not mean a request every
+        // three seconds for an hour, draining the battery.
+        this.retryDelayMs = Math.min(this.retryDelayMs * 2, RETRY_MAX_MS)
         this.update({ state: 'offline' })
         break
 
