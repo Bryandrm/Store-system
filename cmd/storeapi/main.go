@@ -1,7 +1,8 @@
 // Command storeapi is the store-system HTTP server.
 //
-// This file is wiring only: config, pool, migrations, routes, shutdown. If it
-// starts accumulating logic, that logic belongs in a package under internal/.
+// This file is wiring only: config, pool, migrations, server lifecycle. The
+// routes themselves live in internal/api so the integration tests can mount the
+// same router the server runs.
 package main
 
 import (
@@ -18,11 +19,10 @@ import (
 	// America/El_Salvador without a tzdata layer.
 	_ "time/tzdata"
 
+	"github.com/bryandrm/store-system/internal/api"
 	"github.com/bryandrm/store-system/internal/auth"
 	"github.com/bryandrm/store-system/internal/config"
 	"github.com/bryandrm/store-system/internal/db"
-	"github.com/bryandrm/store-system/internal/httpx"
-	"github.com/bryandrm/store-system/internal/sync"
 )
 
 func main() {
@@ -54,50 +54,18 @@ func run() error {
 	}
 	defer pool.Close()
 
-	authService, err := auth.NewService(pool, cfg.TrustProxy, auth.Limits{
-		PerIPPerMinute:     cfg.LoginPerIPPerMinute,
-		PerUsernamePerHour: cfg.LoginPerUsernamePerHour,
+	handler, err := api.New(api.Deps{
+		Pool:           pool,
+		AllowedOrigins: cfg.AllowedOrigins,
+		TrustProxy:     cfg.TrustProxy,
+		LoginLimits: auth.Limits{
+			PerIPPerMinute:     cfg.LoginPerIPPerMinute,
+			PerUsernamePerHour: cfg.LoginPerUsernamePerHour,
+		},
 	})
 	if err != nil {
 		return err
 	}
-	syncHandler := sync.NewHandler(pool)
-
-	mux := http.NewServeMux()
-
-	// Health checks sit outside /api/v1, without auth and without the response
-	// envelope, so a load balancer never has to parse JSON to decide.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
-		pingCtx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
-		defer cancel()
-		if err := pool.Ping(pingCtx); err != nil {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = w.Write([]byte("database unavailable"))
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ready"))
-	})
-
-	// Method and path patterns come from stdlib routing (Go 1.22+). No router
-	// dependency is needed for eleven endpoints.
-	mux.HandleFunc("POST /api/v1/auth/login", authService.HandleLogin)
-	mux.Handle("POST /api/v1/auth/logout", authService.Middleware(http.HandlerFunc(authService.HandleLogout)))
-	mux.Handle("GET /api/v1/auth/me", authService.Middleware(http.HandlerFunc(authService.HandleMe)))
-
-	mux.Handle("GET /api/v1/bootstrap", authService.Middleware(http.HandlerFunc(syncHandler.HandleBootstrap)))
-	mux.Handle("POST /api/v1/sync", authService.Middleware(http.HandlerFunc(syncHandler.HandleSync)))
-
-	handler := httpx.Chain(mux,
-		httpx.WithRequestID,
-		httpx.WithLogging,
-		httpx.WithRecover,
-		httpx.WithCORS(cfg.AllowedOrigins),
-	)
 
 	server := &http.Server{
 		Addr:    cfg.Addr,

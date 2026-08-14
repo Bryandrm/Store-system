@@ -23,9 +23,9 @@ get rebuilt from scratch as arguments every few months.
 - [x] Sync engine with failure classification and Web Locks
 - [x] Sell screen, day view, installable PWA shell
 - [x] iOS mitigations: `storage.persist`, stale-pending warning, install hint
-- [ ] Playwright: `login`, `venta`, `venta-offline`, `recarga-carrito`
-- [ ] `cmd/verify` with the sale invariants
-- [ ] Integration tests 1, 2 and 11
+- [x] Playwright: 15 specs, which found two real bugs
+- [x] `cmd/verify`: 12 invariants, each proven by sabotage
+- [x] Integration tests 1, 2, 11 and 12, entering through the real router
 - [ ] Production compose, Caddy, domain, GCP e2-micro
 - [ ] Frontend on Cloudflare Pages
 - [ ] GitHub Actions: test → build → deploy
@@ -120,8 +120,9 @@ re-bootstrap.
 
 ### Background Sync API
 
-**Not building.** The sync engine polls and reacts to `online` and
-`visibilitychange`.
+**Not building.** The sync engine schedules its own retries and also reacts to
+`online` and `visibilitychange` — the events are treated as a hint, never as the
+mechanism, because `online` was observed never firing at all.
 
 **Trigger:** none foreseen. It is Chromium-only, and buys nothing for an app
 used in the hand rather than in the background.
