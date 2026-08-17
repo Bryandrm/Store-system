@@ -95,7 +95,7 @@ testdata/           money_cases.json — SHARED by both test suites
 ```bash
 docker compose -f compose.dev.yml up -d      # Postgres on :5433
 
-go test ./... -race                          # backend, real database
+go test ./... -race -p 1                     # backend, real database (-p 1: see gotchas)
 go run ./cmd/seed -username <u> -password <p>
 go run ./cmd/storeapi                        # needs DATABASE_URL, ALLOWED_ORIGINS
 
@@ -137,15 +137,21 @@ the Go and the TypeScript suites**. It is the only thing preventing the client
 from quoting the buyer one total while the server stores another. Verified by
 sabotage — changing one expected value must fail *both* suites.
 
-## Two boundaries Postgres does not draw
+## Three boundaries Postgres does not draw
 
-Both of this project's nastiest surprises came from assuming a per-database
-boundary that does not exist. Written here because it will happen a third time:
+This project's nastiest surprises all came from assuming a per-database boundary
+that does not exist. It has happened three times, so expect a fourth:
 
 - **Transaction ids are cluster-wide.** One open transaction anywhere freezes
   the sync feed everywhere. See gotcha #2.
 - **Roles are cluster-wide.** The test harness altering `store_app`'s password
   locked the dev server out of its own database. See gotcha #6.
+- **So is everything the test harness touches.** Parallel package binaries raced
+  over one template database and starved each other's feed, which is why the
+  suite runs with `-p 1`. See gotcha #8.
+
+When something behaves oddly across processes, suspect shared cluster state
+before suspecting the code.
 
 ## More
 

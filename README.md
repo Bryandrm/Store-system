@@ -36,7 +36,7 @@ No ORM, no HTTP framework, no component library.
 docker compose -f compose.dev.yml up -d
 
 # 2. the tests, which create and drop their own throwaway databases
-go test ./... -race
+go test ./... -race -p 1
 ```
 
 Requirements: Go 1.26+, Docker or Colima, Node 22+, pnpm.

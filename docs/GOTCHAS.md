@@ -189,3 +189,44 @@ runs. The extra second per run is worth never debugging phantom failures again.
 being executed before re-reading the source. The bug was one layer below where
 it was being looked for, and every minute spent re-reading correct code was
 wasted.
+
+---
+
+## #8 — `go test ./...` fails in CI but passes locally
+
+**Symptom.** Two different failures, both only under load:
+
+```
+could not create database store_test_...: template database
+  "store_test_template" does not exist
+the sale made after bootstrap was never delivered by the feed
+```
+
+Locally they appear as rare flakes that are easy to dismiss as "something
+transient" — which is exactly what happened here once before being understood.
+
+**Cause.** `go test ./...` runs each package as a **separate binary, in
+parallel**. All of them share one Postgres, and Postgres has cluster-wide state:
+
+- Every process ran `DROP DATABASE` then `CREATE DATABASE` on the same
+  fixed-name template. One dropped it while another was copying from it.
+- An open transaction in one package pins `xmin` for the whole instance, so
+  another package's feed correctly withholds rows it cannot yet deliver in
+  order. This is gotcha #2 again, one level up.
+
+**Fix, two parts.**
+
+`go test ./... -race -p 1` serializes the package binaries. That is the only
+answer to the `xmin` half, because the feed's behaviour is correct — the
+contention is real, not a bug to be worked around.
+
+The template is now **content-addressed**: its name contains a hash of the
+migration files, and creation is guarded by a Postgres advisory lock. Staleness
+becomes impossible by construction — a changed migration produces a different
+name — and the template is built once and reused, instead of being dropped and
+rebuilt by every package.
+
+**The general lesson, and this is the third time.** A per-database boundary that
+Postgres does not draw: **transaction ids** (#2), **roles** (#6), and now the
+**test template**. When something in this project behaves oddly across
+processes, suspect shared cluster state first.

@@ -16,7 +16,9 @@ package testdb
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
+	"io/fs"
 	"math/rand/v2"
 	"net/url"
 	"os"
@@ -25,14 +27,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/bryandrm/store-system/internal/db"
 )
 
 const (
-	templateName = "store_test_template"
-
 	// store_app's password for local use. In production the infrastructure
 	// assigns it; here it is needed because the migration creates the role
 	// NOLOGIN on purpose, so no secret lives in the repository.
@@ -49,9 +50,49 @@ const (
 const defaultAdminURL = "postgres://store_migrator:dev_only_no_usar_en_produccion@localhost:5433/postgres?sslmode=disable"
 
 var (
-	setupOnce sync.Once
-	setupErr  error
+	setupOnce    sync.Once
+	setupErr     error
+	templateName string
 )
+
+// templateNameFor derives the template database name from the migrations
+// themselves.
+//
+// Content-addressing solves two problems at once. Staleness becomes impossible
+// by construction — change a migration and the name changes, so a template
+// built from an older schema can never be reused. And because the name is
+// stable for a given schema, the template is built once and shared by every
+// test binary instead of being rebuilt per package.
+//
+// The previous fixed name was worse than it looked: `go test ./...` runs each
+// package as a separate process, in parallel, and they all raced to DROP and
+// CREATE the same template. See docs/GOTCHAS.md #8.
+func templateNameFor() (string, error) {
+	fsys := db.MigrationsFS()
+	entries, err := fs.ReadDir(fsys, "migrations")
+	if err != nil {
+		return "", fmt.Errorf("could not read migrations: %w", err)
+	}
+
+	sum := sha256.New()
+	for _, entry := range entries {
+		content, err := fs.ReadFile(fsys, "migrations/"+entry.Name())
+		if err != nil {
+			return "", fmt.Errorf("could not read %s: %w", entry.Name(), err)
+		}
+		sum.Write([]byte(entry.Name()))
+		sum.Write(content)
+	}
+
+	return fmt.Sprintf("store_test_tmpl_%x", sum.Sum(nil)[:6]), nil
+}
+
+// templateLockID is the advisory lock guarding template creation.
+//
+// Advisory locks are cluster-wide, which is normally the trap in this project
+// and is exactly what is wanted here: the point is to coordinate ACROSS test
+// processes, which have no other way to see each other.
+const templateLockID = int64(0x5730_7245_5F54_4D50)
 
 // DB is the pair of connections a test receives.
 type DB struct {
@@ -145,38 +186,66 @@ func New(t *testing.T) *DB {
 	return &DB{App: appPool, Admin: adminPool, Name: name, AppURL: appURL}
 }
 
-// ensureTemplate creates the template database and migrates it. Runs once per
-// test process.
+// ensureTemplate makes sure the template database for this schema exists.
+//
+// It is safe to run from several test processes at once, which matters because
+// `go test ./...` runs each package as its own binary, in parallel, against one
+// shared Postgres.
 func ensureTemplate() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 
-	admin, err := pgxpool.New(ctx, adminURL())
+	name, err := templateNameFor()
+	if err != nil {
+		return err
+	}
+	templateName = name
+
+	// A single connection, not a pool: an advisory lock belongs to the session
+	// that took it, and a pool gives no guarantee that the unlock runs on the
+	// same connection as the lock.
+	conn, err := pgx.Connect(ctx, adminURL())
 	if err != nil {
 		return fmt.Errorf("admin connection: %w", err)
 	}
-	defer admin.Close()
+	defer conn.Close(ctx)
 
-	// Rebuilt on every run: a stale template carrying an older schema is a
-	// source of phantom failures that are painful to diagnose.
-	_, _ = admin.Exec(ctx,
-		`SELECT pg_terminate_backend(pid) FROM pg_stat_activity
-		 WHERE datname = $1 AND pid <> pg_backend_pid()`, templateName)
-	if _, err := admin.Exec(ctx, "DROP DATABASE IF EXISTS "+templateName); err != nil {
-		return fmt.Errorf("could not drop the previous template: %w", err)
+	// Serialize creation across processes. Whoever gets here first builds the
+	// template; the others wait and then find it already present.
+	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock($1)", templateLockID); err != nil {
+		return fmt.Errorf("could not take the template lock: %w", err)
 	}
-	if _, err := admin.Exec(ctx, "CREATE DATABASE "+templateName); err != nil {
-		return fmt.Errorf("could not create the template: %w", err)
+	defer func() {
+		_, _ = conn.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", templateLockID)
+	}()
+
+	var exists bool
+	if err := conn.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM pg_database WHERE datname = $1)", templateName,
+	).Scan(&exists); err != nil {
+		return fmt.Errorf("could not check for the template: %w", err)
 	}
 
-	templateURL := urlForDatabase(adminURL(), templateName, "", "")
-	if err := db.Migrate(ctx, templateURL); err != nil {
-		return fmt.Errorf("migrating the template: %w", err)
+	if !exists {
+		if _, err := conn.Exec(ctx, "CREATE DATABASE "+templateName); err != nil {
+			return fmt.Errorf("could not create the template: %w", err)
+		}
+		templateURL := urlForDatabase(adminURL(), templateName, "", "")
+		if err := db.Migrate(ctx, templateURL); err != nil {
+			// Leave nothing half-migrated behind, or the next run finds a
+			// template that exists but is incomplete and skips rebuilding it.
+			_, _ = conn.Exec(ctx, "DROP DATABASE IF EXISTS "+templateName)
+			return fmt.Errorf("migrating the template: %w", err)
+		}
 	}
 
-	// The migration creates store_app NOLOGIN on purpose (credentials come from
-	// the infrastructure). Tests have to grant it access.
-	if _, err := admin.Exec(ctx,
+	// The migration creates store_app NOLOGIN on purpose, so no secret lives in
+	// the repository. Tests need it to be able to connect.
+	//
+	// Roles are cluster-wide, so this password MUST match the development
+	// server's or running the tests locks it out of its own database — see
+	// gotcha #6. Running it every time is harmless and idempotent.
+	if _, err := conn.Exec(ctx,
 		fmt.Sprintf("ALTER ROLE store_app LOGIN PASSWORD '%s'", testAppPassword)); err != nil {
 		return fmt.Errorf("could not enable store_app: %w", err)
 	}

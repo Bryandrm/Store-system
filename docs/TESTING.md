@@ -132,7 +132,7 @@ would duplicate effort in the lowest-value layer.
 ## CI gates
 
 ```bash
-go vet ./... && go test ./... -race     # layers 1 and 3
+go vet ./... && go test ./... -race -p 1  # layers 1 and 3
 go run ./cmd/verify                     # cross-table invariants
 tsc --noEmit && vitest run              # TypeScript
 playwright test                         # layer 4
@@ -147,7 +147,7 @@ nothing, which measures obedience rather than correctness.
 
 ```bash
 docker compose -f compose.dev.yml up -d
-go test ./... -race
+go test ./... -race -p 1
 cd web && pnpm test
 ```
 
