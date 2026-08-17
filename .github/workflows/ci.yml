@@ -207,6 +207,13 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Container registries require lowercase repository names, and the GitHub
+      # owner here is capitalised. Computed rather than hardcoded so renaming
+      # the account does not silently break the push.
+      - name: Lowercase the image name
+        id: image
+        run: echo "repo=ghcr.io/$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')/store-system" >> "$GITHUB_OUTPUT"
+
       - uses: docker/build-push-action@v6
         with:
           context: .
@@ -214,7 +221,7 @@ jobs:
           # Tagged by commit as well as latest, so a deploy can be pinned and
           # a rollback is a tag change rather than a rebuild.
           tags: |
-            ghcr.io/${{ github.repository_owner }}/store-system:latest
-            ghcr.io/${{ github.repository_owner }}/store-system:${{ github.sha }}
+            ${{ steps.image.outputs.repo }}:latest
+            ${{ steps.image.outputs.repo }}:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
