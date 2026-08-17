@@ -26,10 +26,75 @@ import (
 )
 
 func main() {
+	// The container healthcheck runs this binary against itself.
+	//
+	// distroless has no shell and no curl, which is the point of using it, so
+	// the process has to be able to check its own liveness. The alternative
+	// would be adding a shell to the runtime image purely so Docker can call
+	// wget, which gives back exactly what distroless was chosen to remove.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		os.Exit(healthcheck())
+	}
+
+	// Applies migrations and exits. The server does this on startup anyway, so
+	// this exists for the cases where starting a server is the wrong tool:
+	// preparing a database in CI, and running migrations by hand before a
+	// deploy when a change needs checking before traffic reaches it.
+	if len(os.Args) > 1 && os.Args[1] == "-migrate-only" {
+		if err := migrateOnly(); err != nil {
+			slog.Error("migration failed", "error", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if err := run(); err != nil {
 		slog.Error("the server could not start", "error", err)
 		os.Exit(1)
 	}
+}
+
+// migrateOnly applies migrations and returns.
+//
+// It reads the environment directly rather than going through config.Load,
+// which requires ALLOWED_ORIGINS and the rest of the serving configuration.
+// Demanding a CORS origin in order to run a migration would be nonsense, and
+// the kind of nonsense that gets worked around with a dummy value.
+func migrateOnly() error {
+	setupLogging(false)
+
+	url := os.Getenv("MIGRATION_DATABASE_URL")
+	if url == "" {
+		url = os.Getenv("DATABASE_URL")
+	}
+	if url == "" {
+		return errors.New("MIGRATION_DATABASE_URL or DATABASE_URL is required")
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	return db.Migrate(ctx, url)
+}
+
+// healthcheck returns 0 when the local server answers /healthz.
+func healthcheck() int {
+	addr := os.Getenv("ADDR")
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1" + addr + "/healthz")
+	if err != nil {
+		return 1
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 func run() error {

@@ -1,0 +1,43 @@
+# Caddy terminates TLS and proxies to the API.
+#
+# Certificates are obtained and renewed automatically from Let's Encrypt, which
+# is the entire reason Caddy is here rather than nginx: HTTPS is not optional,
+# because without a secure context there is no service worker, and without a
+# service worker there is no offline — the product's main feature.
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	# CORS is handled by the Go application, not here. Two places deciding which
+	# origins are allowed is one place too many, and the one that drifts is
+	# always the one nobody is looking at.
+	reverse_proxy api:8080 {
+		header_up X-Real-IP {remote_host}
+	}
+
+	header {
+		# The API only ever answers JSON, so the browser should never be
+		# guessing at content types.
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy no-referrer
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		# Caddy's version is of interest only to somebody scanning for exploits.
+		-Server
+	}
+
+	# Health checks are noise in an access log that is read to find real problems.
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}
+
+# Redirect bare HTTP. Caddy does this automatically for the site above; this
+# block only exists to answer requests arriving by IP or with an unknown Host,
+# which is constant background scanning. Answering with a close costs nothing
+# and keeps them out of the log.
+:80 {
+	abort
+}

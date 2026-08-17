@@ -1,0 +1,156 @@
+# Production stack for a GCP e2-micro: 2 shared vCPU, 1 GB RAM, 30 GB disk.
+#
+# Memory is the binding constraint, and the budget is genuinely tight:
+#
+#   OS + kernel            ~180 MB
+#   dockerd + containerd   ~150 MB   <- real, and painful
+#   Postgres                340 MB
+#   Go API                  170 MB
+#   Caddy                    64 MB
+#   free / page cache      ~150 MB
+#
+# If the OOM killer ever shows up, the escape hatch is documented in
+# docs/DEPLOY.md: dropping Docker and running the three as systemd units frees
+# roughly 150 MB. It is written down before it is needed on purpose.
+
+name: store-system
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: store_migrator
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: store_system
+      TZ: UTC
+      # --data-checksums detects silent disk corruption instead of serving
+      # broken bytes as data. It matters here because the free-tier disk is
+      # spinning rust, and it CANNOT be enabled later without recreating the
+      # cluster — a one-shot decision.
+      # --locale=C avoids glibc/ICU collations entirely; case-insensitive search
+      # uses lower() plus functional indexes.
+      POSTGRES_INITDB_ARGS: "--locale=C --encoding=UTF8 --data-checksums"
+    volumes:
+      # Gotcha #1: Postgres 18+ images keep data in a version-named subdirectory.
+      # Mounting at /var/lib/postgresql/data leaves the container restarting.
+      - postgres_data:/var/lib/postgresql
+    # Never published. Only the API talks to it, over the compose network.
+    expose:
+      - "5432"
+    mem_limit: 340m
+    shm_size: 128m
+    # Postgres holds the data; the API is stateless and the clients retry. If
+    # something must die, it should be the API.
+    oom_score_adj: -500
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - effective_cache_size=256MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - maintenance_work_mem=32MB
+      # Each backend is a process costing 5-10 MB RSS. A careless 100 here is
+      # the most common way to OOM a 1 GB box.
+      - -c
+      - max_connections=20
+      # Parallelism is pure overhead at this size.
+      - -c
+      - max_parallel_workers_per_gather=0
+      - -c
+      - max_parallel_workers=0
+      - -c
+      - max_wal_size=512MB
+      - -c
+      - min_wal_size=80MB
+      - -c
+      - wal_buffers=4MB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - checkpoint_timeout=15min
+      # Mandatory below 2 GB.
+      - -c
+      - huge_pages=off
+      # NOT a tuning knob. This is money.
+      - -c
+      - synchronous_commit=on
+      # These two are load-bearing, not hygiene: an open transaction pins the
+      # snapshot's xmin and FREEZES the sync feed for every device. See gotcha #2.
+      - -c
+      - idle_in_transaction_session_timeout=30s
+      - -c
+      - statement_timeout=15s
+      - -c
+      - log_min_duration_statement=500ms
+      - -c
+      - timezone=UTC
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U store_migrator -d store_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  api:
+    image: ${API_IMAGE:-ghcr.io/bryandrm/store-system:latest}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # The application role, which holds no UPDATE or DELETE on transactional
+      # tables. Migrations use the separate migrator role below.
+      DATABASE_URL: postgres://store_app:${STORE_APP_PASSWORD:?STORE_APP_PASSWORD is required}@postgres:5432/store_system?sslmode=disable
+      MIGRATION_DATABASE_URL: postgres://store_migrator:${POSTGRES_PASSWORD}@postgres:5432/store_system?sslmode=disable
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:?ALLOWED_ORIGINS is required}
+      ADDR: ":8080"
+      PRODUCTION: "true"
+      # Caddy sits in front, so X-Forwarded-For can be believed. It must stay
+      # false anywhere the API is directly reachable, or the per-IP login limit
+      # can be bypassed with a made-up header.
+      TRUST_PROXY: "true"
+      # A soft limit: Go collects harder as it approaches, and will not refuse a
+      # large allocation. GOGC stays at its default — turning it off would defer
+      # all collection until the limit and raise both latency and steady RSS.
+      GOMEMLIMIT: 128MiB
+      # e2-micro has NO cgroup CPU limit; its 0.25 vCPU baseline is enforced by
+      # the hypervisor and is invisible from inside, so Go cannot infer it.
+      GOMAXPROCS: "2"
+      TZ: UTC
+    expose:
+      - "8080"
+    mem_limit: 170m
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/storeapi", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN is required}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Certificates survive a restart; without this, every deploy asks Let's
+      # Encrypt again and eventually hits its rate limit.
+      - caddy_data:/data
+      - caddy_config:/config
+    mem_limit: 64m
+
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

@@ -26,9 +26,11 @@ get rebuilt from scratch as arguments every few months.
 - [x] Playwright: 15 specs, which found two real bugs
 - [x] `cmd/verify`: 12 invariants, each proven by sabotage
 - [x] Integration tests 1, 2, 11 and 12, entering through the real router
-- [ ] Production compose, Caddy, domain, GCP e2-micro
+- [~] Production image, compose and Caddy written and verified locally
+- [ ] Domain and GCP e2-micro — needs an account and a purchase
 - [ ] Frontend on Cloudflare Pages
-- [ ] GitHub Actions: test → build → deploy
+- [x] GitHub Actions: test → e2e → image
+- [ ] Deploy step — needs a server to deploy to
 
 **Done criterion.** One real day of selling, on a phone, including a stretch
 with mobile data off, and the sales are on the server afterwards.
